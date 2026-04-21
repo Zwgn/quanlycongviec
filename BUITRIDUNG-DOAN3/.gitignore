@@ -1,0 +1,45 @@
+# Node.js dependencies
+node_modules/
+BE/node_modules/
+taskflowweb/node_modules/
+
+# Build output
+build/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.pid.lock
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary/cache
+.tmp/
+tmp/
+.cache/
+
+# Optional: local database/sql dumps
+*.sqlite
+*.db
