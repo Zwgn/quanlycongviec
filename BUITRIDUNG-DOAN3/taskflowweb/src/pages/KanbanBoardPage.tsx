@@ -38,7 +38,6 @@ function KanbanBoardPage({
     setInviteRole,
     inviteError,
     setInviteError,
-    memberActionError,
     setMemberActionError,
     boardMembers,
     notifications,
@@ -141,9 +140,6 @@ function KanbanBoardPage({
     handleUpdateMemberRole,
     canRemoveMember,
     handleRemoveMemberFromWorkspace,
-    handleSwitchProject,
-    handleOpenAccountSettings,
-    handleLogout,
   } = useKanbanBoardPage({
     projectId,
     initialProjectName,
