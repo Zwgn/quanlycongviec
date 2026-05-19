@@ -28,7 +28,9 @@ export type LoginData = {
   };
 };
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL ?? 'https://quanlycongviec-qsyq.onrender.com';
+const API_BASE_URL =
+  process.env.REACT_APP_API_BASE_URL ||
+  'https://quanlycongviec-qsyq.onrender.com/api';
 
 const normalizeFetchError = (error: unknown): Error => {
   if (error instanceof Error) {
