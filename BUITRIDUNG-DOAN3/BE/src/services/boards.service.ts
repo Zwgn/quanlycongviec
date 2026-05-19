@@ -104,11 +104,14 @@ const ensureBoardByProjectId = async (
       SELECT TOP 1 p.projectId, p.name
       FROM Project p
       INNER JOIN Workspace w ON w.workspaceId = p.workspaceId
+      LEFT JOIN WorkspaceMember wm
+        ON wm.workspaceId = w.workspaceId
+       AND wm.userId = @userId
       LEFT JOIN ProjectMember pm
         ON pm.projectId = p.projectId
        AND pm.userId = @userId
       WHERE p.projectId = @projectId
-        AND (w.ownerId = @userId OR pm.userId = @userId)
+        AND (w.ownerId = @userId OR wm.userId = @userId OR pm.userId = @userId)
     `);
 
   const project = permissionResult.recordset?.[0] as
@@ -230,11 +233,14 @@ const ensureProjectMembership = async (
       SELECT TOP 1 p.projectId
       FROM Project p
       INNER JOIN Workspace w ON w.workspaceId = p.workspaceId
+      LEFT JOIN WorkspaceMember wm
+        ON wm.workspaceId = w.workspaceId
+       AND wm.userId = @userId
       LEFT JOIN ProjectMember pm
         ON pm.projectId = p.projectId
        AND pm.userId = @userId
       WHERE p.projectId = @projectId
-        AND (w.ownerId = @userId OR pm.userId = @userId)
+        AND (w.ownerId = @userId OR wm.userId = @userId OR pm.userId = @userId)
     `);
 
   if (!permissionResult.recordset?.[0]) {

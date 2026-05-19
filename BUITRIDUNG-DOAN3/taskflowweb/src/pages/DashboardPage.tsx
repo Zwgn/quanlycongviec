@@ -1,17 +1,7 @@
-import React, { useEffect, useState } from 'react';
 import '../assets/styles/Dashboard.css';
-import {
-  createProject,
-  createWorkspace,
-  CurrentUser,
-  deleteProject,
-  getCurrentUser,
-  getProjectsByWorkspace,
-  getUserWorkspaces,
-  Project,
-  updateProject,
-  Workspace,
-} from '../services/dashboard.service';
+import ConfirmModal from '../components/common/ConfirmModal';
+import { useDashboardPage } from '../hooks/useDashboardPage';
+import type { Project } from '../services/dashboard.service';
 
 type DashboardPageProps = {
   onOpenProject: (project: Project) => void;
@@ -19,356 +9,103 @@ type DashboardPageProps = {
   onLogout: () => void;
 };
 
-const roleLabelMap: Record<Workspace['role'], string> = {
-  Owner: 'Chủ sở hữu',
-  Admin: 'Quản trị viên',
-  Member: 'Thành viên',
-};
-
+// Trang dashboard quản lý workspace, dự án và thông báo.
 function DashboardPage({ onOpenProject, onOpenAccountSettings, onLogout }: DashboardPageProps) {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<number | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [loadingWorkspaces, setLoadingWorkspaces] = useState(true);
-  const [loadingProjects, setLoadingProjects] = useState(false);
-  const [loadingUser, setLoadingUser] = useState(true);
-  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
-  const [creatingProject, setCreatingProject] = useState(false);
-  const [isCreateWorkspaceModalOpen, setIsCreateWorkspaceModalOpen] = useState(false);
-  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
-  const [isEditProjectModalOpen, setIsEditProjectModalOpen] = useState(false);
-  const [isDeleteProjectModalOpen, setIsDeleteProjectModalOpen] = useState(false);
-  const [newWorkspaceName, setNewWorkspaceName] = useState('');
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDescription, setNewProjectDescription] = useState('');
-  const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
-  const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null);
-  const [deletingProjectName, setDeletingProjectName] = useState('');
-  const [editProjectName, setEditProjectName] = useState('');
-  const [editProjectDescription, setEditProjectDescription] = useState('');
-  const [createWorkspaceError, setCreateWorkspaceError] = useState('');
-  const [createProjectError, setCreateProjectError] = useState('');
-  const [editProjectError, setEditProjectError] = useState('');
-  const [deleteProjectError, setDeleteProjectError] = useState('');
-  const [projectError, setProjectError] = useState('');
-  const [projectSuccess, setProjectSuccess] = useState('');
-  const [workspaceError, setWorkspaceError] = useState('');
-  const [userError, setUserError] = useState('');
-  const [updatingProject, setUpdatingProject] = useState(false);
-  const [deletingProject, setDeletingProject] = useState(false);
-  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
-
-  const selectedWorkspace = workspaces.find((item) => item.workspaceId === selectedWorkspaceId) ?? null;
-  const canManageSelectedWorkspace =
-    selectedWorkspace?.role === 'Owner' || selectedWorkspace?.role === 'Admin';
-
-  useEffect(() => {
-    const loadCurrentUser = async () => {
-      try {
-        setLoadingUser(true);
-        setUserError('');
-
-        const user = await getCurrentUser();
-        setCurrentUser(user);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Không thể tải thông tin người dùng.';
-        setUserError(message);
-      } finally {
-        setLoadingUser(false);
-      }
-    };
-
-    void loadCurrentUser();
-  }, []);
-
-  useEffect(() => {
-    const loadWorkspaces = async () => {
-      try {
-        setLoadingWorkspaces(true);
-        setWorkspaceError('');
-
-        const items = await getUserWorkspaces();
-        setWorkspaces(items);
-
-        if (items.length > 0) {
-          setSelectedWorkspaceId(items[0].workspaceId);
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Không thể tải danh sách không gian làm việc.';
-        setWorkspaceError(message);
-      } finally {
-        setLoadingWorkspaces(false);
-      }
-    };
-
-    void loadWorkspaces();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) {
-      setProjects([]);
-      return;
-    }
-
-    const loadProjects = async () => {
-      try {
-        setLoadingProjects(true);
-        setProjectError('');
-        const items = await getProjectsByWorkspace(selectedWorkspaceId);
-        setProjects(items);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Không thể tải danh sách dự án.';
-        setProjectError(message);
-        setProjects([]);
-      } finally {
-        setLoadingProjects(false);
-      }
-    };
-
-    void loadProjects();
-  }, [selectedWorkspaceId]);
-
-  const handleOpenCreateWorkspaceModal = () => {
-    setCreateWorkspaceError('');
-    setNewWorkspaceName('');
-    setIsCreateWorkspaceModalOpen(true);
-  };
-
-  const handleCloseCreateWorkspaceModal = () => {
-    if (creatingWorkspace) {
-      return;
-    }
-
-    setIsCreateWorkspaceModalOpen(false);
-    setCreateWorkspaceError('');
-    setNewWorkspaceName('');
-  };
-
-  const handleCreateWorkspace = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const trimmedName = newWorkspaceName.trim();
-
-    if (!trimmedName) {
-      setCreateWorkspaceError('Tên không gian làm việc không được để trống.');
-      return;
-    }
-
-    if (trimmedName.length < 2) {
-      setCreateWorkspaceError('Tên không gian làm việc cần ít nhất 2 ký tự.');
-      return;
-    }
-
-    try {
-      setCreatingWorkspace(true);
-      setWorkspaceError('');
-      setCreateWorkspaceError('');
-
-      const newWorkspace = await createWorkspace(trimmedName);
-      setWorkspaces((prev) => [newWorkspace, ...prev]);
-      setSelectedWorkspaceId(newWorkspace.workspaceId);
-      handleCloseCreateWorkspaceModal();
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Không thể tạo không gian làm việc mới.';
-      setCreateWorkspaceError(message);
-    } finally {
-      setCreatingWorkspace(false);
-    }
-  };
-
-  const handleOpenCreateProjectModal = () => {
-    if (!selectedWorkspaceId) {
-      setWorkspaceError('Vui lòng chọn không gian làm việc trước khi tạo dự án.');
-      return;
-    }
-
-    setCreateProjectError('');
-    setProjectSuccess('');
-    setNewProjectName('');
-    setNewProjectDescription('');
-    setIsCreateProjectModalOpen(true);
-  };
-
-  const handleCloseCreateProjectModal = () => {
-    if (creatingProject) {
-      return;
-    }
-
-    setIsCreateProjectModalOpen(false);
-    setCreateProjectError('');
-    setNewProjectName('');
-    setNewProjectDescription('');
-  };
-
-  const handleCreateProject = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!selectedWorkspaceId) {
-      setCreateProjectError('Không có không gian làm việc được chọn.');
-      return;
-    }
-
-    const trimmedName = newProjectName.trim();
-    const trimmedDescription = newProjectDescription.trim();
-
-    if (!trimmedName) {
-      setCreateProjectError('Tên dự án không được để trống.');
-      return;
-    }
-
-    if (trimmedName.length < 2) {
-      setCreateProjectError('Tên dự án cần ít nhất 2 ký tự.');
-      return;
-    }
-
-    try {
-      setCreatingProject(true);
-      setCreateProjectError('');
-
-      const created = await createProject({
-        workspaceId: selectedWorkspaceId,
-        name: trimmedName,
-        description: trimmedDescription || undefined,
-      });
-
-      setProjects((prev) => [
-        {
-          ...created,
-          workspaceId: selectedWorkspaceId,
-          description: created.description ?? undefined,
-        },
-        ...prev,
-      ]);
-      setProjectSuccess('Tạo dự án thành công.');
-
-      handleCloseCreateProjectModal();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Không thể tạo dự án mới.';
-      setCreateProjectError(message);
-    } finally {
-      setCreatingProject(false);
-    }
-  };
-
-  const handleOpenEditProjectModal = (project: Project) => {
-    setEditProjectError('');
-    setProjectSuccess('');
-    setEditingProjectId(project.projectId);
-    setEditProjectName(project.name);
-    setEditProjectDescription(project.description ?? '');
-    setIsEditProjectModalOpen(true);
-  };
-
-  const handleCloseEditProjectModal = () => {
-    if (updatingProject) {
-      return;
-    }
-
-    setIsEditProjectModalOpen(false);
-    setEditProjectError('');
-    setEditingProjectId(null);
-    setEditProjectName('');
-    setEditProjectDescription('');
-  };
-
-  const handleUpdateProject = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!editingProjectId) {
-      setEditProjectError('Không tìm thấy dự án cần cập nhật.');
-      return;
-    }
-
-    const trimmedName = editProjectName.trim();
-    const trimmedDescription = editProjectDescription.trim();
-
-    if (!trimmedName) {
-      setEditProjectError('Tên dự án không được để trống.');
-      return;
-    }
-
-    if (trimmedName.length < 2) {
-      setEditProjectError('Tên dự án cần ít nhất 2 ký tự.');
-      return;
-    }
-
-    try {
-      setUpdatingProject(true);
-      setEditProjectError('');
-
-      const updated = await updateProject(editingProjectId, {
-        name: trimmedName,
-        description: trimmedDescription || undefined,
-      });
-
-      setProjects((prev) =>
-        prev.map((item) =>
-          item.projectId === editingProjectId
-            ? {
-                ...item,
-                name: updated.name,
-                description: updated.description ?? undefined,
-                updatedAt: updated.updatedAt,
-              }
-            : item
-        )
-      );
-      setProjectSuccess('Cập nhật dự án thành công.');
-
-      handleCloseEditProjectModal();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Không thể cập nhật dự án.';
-      setEditProjectError(message);
-    } finally {
-      setUpdatingProject(false);
-    }
-  };
-
-  const handleOpenDeleteProjectModal = (project: Project) => {
-    setDeleteProjectError('');
-    setProjectSuccess('');
-    setDeletingProjectId(project.projectId);
-    setDeletingProjectName(project.name);
-    setIsDeleteProjectModalOpen(true);
-  };
-
-  const handleCloseDeleteProjectModal = () => {
-    if (deletingProject) {
-      return;
-    }
-
-    setIsDeleteProjectModalOpen(false);
-    setDeleteProjectError('');
-    setDeletingProjectId(null);
-    setDeletingProjectName('');
-  };
-
-  const handleDeleteProject = async () => {
-    if (!deletingProjectId) {
-      setDeleteProjectError('Không tìm thấy dự án cần xóa.');
-      return;
-    }
-
-    try {
-      setDeletingProject(true);
-      setDeleteProjectError('');
-
-      const deletedMessage = await deleteProject(deletingProjectId);
-
-      setProjects((prev) => prev.filter((item) => item.projectId !== deletingProjectId));
-      setProjectSuccess(deletedMessage || 'Đã xóa dự án thành công.');
-      handleCloseDeleteProjectModal();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Không thể xóa dự án.';
-      setDeleteProjectError(message);
-    } finally {
-      setDeletingProject(false);
-    }
-  };
+  const {
+    roleLabelMap,
+    workspaces,
+    selectedWorkspaceId,
+    setSelectedWorkspaceId,
+    projects,
+    currentUser,
+    loadingWorkspaces,
+    loadingProjects,
+    loadingUser,
+    creatingWorkspace,
+    creatingProject,
+    isCreateWorkspaceModalOpen,
+    isCreateProjectModalOpen,
+    isEditWorkspaceModalOpen,
+    isDeleteWorkspaceModalOpen,
+    isEditProjectModalOpen,
+    isDeleteProjectModalOpen,
+    newWorkspaceName,
+    setNewWorkspaceName,
+    editWorkspaceName,
+    setEditWorkspaceName,
+    newProjectName,
+    setNewProjectName,
+    newProjectDescription,
+    setNewProjectDescription,
+    deletingWorkspaceName,
+    deletingProjectName,
+    editProjectName,
+    setEditProjectName,
+    editProjectDescription,
+    setEditProjectDescription,
+    createWorkspaceError,
+    editWorkspaceError,
+    deleteWorkspaceError,
+    createProjectError,
+    editProjectError,
+    deleteProjectError,
+    projectError,
+    projectSuccess,
+    workspaceError,
+    userError,
+    updatingWorkspace,
+    deletingWorkspace,
+    updatingProject,
+    deletingProject,
+    isAccountMenuOpen,
+    setIsAccountMenuOpen,
+    isShareModalOpen,
+    setIsShareModalOpen,
+    inviteEmail,
+    setInviteEmail,
+    inviteRole,
+    setInviteRole,
+    inviteError,
+    memberActionError,
+    workspaceMembers,
+    notifications,
+    isNotificationPanelOpen,
+    setIsNotificationPanelOpen,
+    confirmState,
+    isConfirmSubmitting,
+    selectedWorkspace,
+    canManageSelectedWorkspace,
+    canInviteAdmin,
+    unreadNotifications,
+    canManageMemberRole,
+    canRemoveMember,
+    handleConfirm,
+    handleCloseConfirm,
+    handleOpenShareModal,
+    handleInviteWorkspaceMember,
+    handleUpdateMemberRole,
+    handleRemoveMemberFromWorkspace,
+    handleOpenCreateWorkspaceModal,
+    handleCloseCreateWorkspaceModal,
+    handleCreateWorkspace,
+    handleOpenEditWorkspaceModal,
+    handleCloseEditWorkspaceModal,
+    handleUpdateWorkspace,
+    handleOpenDeleteWorkspaceModal,
+    handleCloseDeleteWorkspaceModal,
+    handleDeleteWorkspace,
+    handleOpenCreateProjectModal,
+    handleCloseCreateProjectModal,
+    handleCreateProject,
+    handleOpenEditProjectModal,
+    handleCloseEditProjectModal,
+    handleUpdateProject,
+    handleOpenDeleteProjectModal,
+    handleCloseDeleteProjectModal,
+    handleDeleteProject,
+    handleOpenAccountSettings,
+    handleLogout,
+  } = useDashboardPage({ onOpenAccountSettings, onLogout });
 
   return (
     <div className="dashboard-root">
@@ -392,19 +129,77 @@ function DashboardPage({ onOpenProject, onOpenAccountSettings, onLogout }: Dashb
           {workspaceError ? <p className="dashboard-error">{workspaceError}</p> : null}
 
           <div className="dashboard-workspace-list">
-            {workspaces.map((workspace) => (
-              <button
-                key={workspace.workspaceId}
-                type="button"
-                className={`dashboard-workspace-item${
-                  workspace.workspaceId === selectedWorkspaceId ? ' is-active' : ''
-                }`}
-                onClick={() => setSelectedWorkspaceId(workspace.workspaceId)}
-              >
-                <strong>{workspace.name}</strong>
-                <span>Vai trò: {roleLabelMap[workspace.role]}</span>
-              </button>
-            ))}
+            {workspaces.map((workspace) => {
+              const canManageWorkspace = workspace.role === 'Owner' || workspace.role === 'Admin';
+
+              return (
+                <article
+                  key={workspace.workspaceId}
+                  className={`dashboard-workspace-item${
+                    workspace.workspaceId === selectedWorkspaceId ? ' is-active' : ''
+                  }`}
+                  onClick={() => setSelectedWorkspaceId(workspace.workspaceId)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelectedWorkspaceId(workspace.workspaceId);
+                    }
+                  }}
+                >
+                  <strong>{workspace.name}</strong>
+                  <span>Vai trò: {roleLabelMap[workspace.role]}</span>
+
+                  {canManageWorkspace ? (
+                    <div className="dashboard-workspace-icon-actions">
+                      <button
+                        type="button"
+                        className="dashboard-edit-project dashboard-workspace-edit"
+                        aria-label="Sửa không gian làm việc"
+                        title="Sửa không gian làm việc"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleOpenEditWorkspaceModal(workspace);
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M4 16.5V20h3.5L18.4 9.1l-3.5-3.5L4 16.5Zm11.7-9.8 2.1-2.1a1.5 1.5 0 0 1 2.1 0l.9.9a1.5 1.5 0 0 1 0 2.1l-2.1 2.1-3-2.9Z"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="dashboard-delete-project dashboard-workspace-delete"
+                        aria-label="Xóa không gian làm việc"
+                        title="Xóa không gian làm việc"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleOpenDeleteWorkspaceModal(workspace);
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M7 9h10M9 9V7.8c0-.66.54-1.2 1.2-1.2h3.6c.66 0 1.2.54 1.2 1.2V9M8.4 9l.6 8.1c.05.62.57 1.1 1.2 1.1h3.6c.63 0 1.15-.48 1.2-1.1l.6-8.1"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         </aside>
 
@@ -413,6 +208,73 @@ function DashboardPage({ onOpenProject, onOpenAccountSettings, onLogout }: Dashb
             <div className="dashboard-logo">Bảng điều khiển TASKFLOW</div>
 
             <div className="dashboard-user-area">
+              <button
+                type="button"
+                className="dashboard-share-btn"
+                onClick={() => {
+                  void handleOpenShareModal();
+                }}
+                disabled={!selectedWorkspace || !canManageSelectedWorkspace}
+                title={
+                  !selectedWorkspace
+                    ? 'Vui lòng chọn không gian làm việc'
+                    : !canManageSelectedWorkspace
+                      ? 'Bạn không có quyền chia sẻ không gian làm việc này'
+                      : undefined
+                }
+              >
+                + Chia sẻ
+              </button>
+
+              <div className="dashboard-notification-wrap">
+                <button
+                  type="button"
+                  className="dashboard-bell-btn"
+                  aria-label="Danh sách thông báo"
+                  onClick={() => setIsNotificationPanelOpen((prev) => !prev)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className="dashboard-bell-icon">
+                    <path
+                      d="M12 4a5 5 0 0 0-5 5v2.8c0 .7-.2 1.4-.6 2L5.2 16h13.6l-1.2-2.2a4 4 0 0 1-.6-2V9a5 5 0 0 0-5-5Z"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M10 18a2 2 0 0 0 4 0"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  {unreadNotifications > 0 ? (
+                    <span className="dashboard-bell-badge">{unreadNotifications}</span>
+                  ) : null}
+                </button>
+
+                {isNotificationPanelOpen ? (
+                  <div className="dashboard-notification-panel" role="region" aria-label="Danh sách thông báo">
+                    <h4>Danh sách thông báo</h4>
+                    {notifications.length === 0 ? (
+                      <p className="dashboard-notification-empty">Chưa có thông báo mới.</p>
+                    ) : (
+                      <div className="dashboard-notification-list">
+                        {notifications.map((item) => (
+                          <article key={item.id} className="dashboard-notification-item">
+                            <strong>{item.message}</strong>
+                            <span>{item.timeLabel}</span>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
               <div className="dashboard-account-wrap">
                 <button
                   type="button"
@@ -432,20 +294,14 @@ function DashboardPage({ onOpenProject, onOpenAccountSettings, onLogout }: Dashb
                     <button
                       type="button"
                       role="menuitem"
-                      onClick={() => {
-                        setIsAccountMenuOpen(false);
-                        onOpenAccountSettings();
-                      }}
+                      onClick={handleOpenAccountSettings}
                     >
                       Quản lý tài khoản
                     </button>
                     <button
                       type="button"
                       role="menuitem"
-                      onClick={() => {
-                        setIsAccountMenuOpen(false);
-                        onLogout();
-                      }}
+                      onClick={handleLogout}
                     >
                       Đăng xuất
                     </button>
@@ -615,6 +471,101 @@ function DashboardPage({ onOpenProject, onOpenAccountSettings, onLogout }: Dashb
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isEditWorkspaceModalOpen ? (
+        <div
+          className="dashboard-modal-overlay"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              handleCloseEditWorkspaceModal();
+            }
+          }}
+        >
+          <div className="dashboard-modal" role="dialog" aria-modal="true" aria-label="Sửa không gian làm việc">
+            <h3>Sửa không gian làm việc</h3>
+            <p>Cập nhật tên không gian làm việc hiện tại.</p>
+
+            <form className="dashboard-modal-form" onSubmit={handleUpdateWorkspace} noValidate>
+              <label htmlFor="editWorkspaceName" className="dashboard-modal-label">
+                Tên không gian làm việc
+              </label>
+              <input
+                id="editWorkspaceName"
+                className={`dashboard-modal-input${editWorkspaceError ? ' is-error' : ''}`}
+                value={editWorkspaceName}
+                onChange={(event) => {
+                  setEditWorkspaceName(event.target.value);
+                  if (editWorkspaceError) {
+                    setEditWorkspaceError('');
+                  }
+                }}
+                placeholder="Ví dụ: Product Team"
+                maxLength={255}
+                disabled={updatingWorkspace}
+                autoFocus
+              />
+
+              {editWorkspaceError ? <p className="dashboard-modal-error">{editWorkspaceError}</p> : null}
+
+              <div className="dashboard-modal-actions">
+                <button
+                  type="button"
+                  className="dashboard-modal-cancel"
+                  onClick={handleCloseEditWorkspaceModal}
+                  disabled={updatingWorkspace}
+                >
+                  Hủy
+                </button>
+                <button type="submit" className="dashboard-modal-submit" disabled={updatingWorkspace}>
+                  {updatingWorkspace ? 'Đang lưu...' : 'Lưu thay đổi'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isDeleteWorkspaceModalOpen ? (
+        <div
+          className="dashboard-modal-overlay"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              handleCloseDeleteWorkspaceModal();
+            }
+          }}
+        >
+          <div className="dashboard-modal" role="dialog" aria-modal="true" aria-label="Xóa không gian làm việc">
+            <h3>Xóa không gian làm việc</h3>
+            <p>
+              Bạn có chắc muốn xóa không gian làm việc <strong>{deletingWorkspaceName}</strong> không?
+            </p>
+            <p>Hành động này không thể hoàn tác.</p>
+
+            {deleteWorkspaceError ? <p className="dashboard-modal-error">{deleteWorkspaceError}</p> : null}
+
+            <div className="dashboard-modal-actions">
+              <button
+                type="button"
+                className="dashboard-modal-cancel"
+                onClick={handleCloseDeleteWorkspaceModal}
+                disabled={deletingWorkspace}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="dashboard-modal-delete"
+                onClick={handleDeleteWorkspace}
+                disabled={deletingWorkspace}
+              >
+                {deletingWorkspace ? 'Đang xóa...' : 'Xác nhận xóa'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -795,6 +746,118 @@ function DashboardPage({ onOpenProject, onOpenAccountSettings, onLogout }: Dashb
           </div>
         </div>
       ) : null}
+
+      {isShareModalOpen ? (
+        <div
+          className="dashboard-modal-overlay"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsShareModalOpen(false);
+            }
+          }}
+        >
+          <div className="dashboard-share-modal" role="dialog" aria-modal="true" aria-label="Mời thành viên workspace">
+            <div className="dashboard-share-head">
+              <h3>Chia sẻ workspace</h3>
+              <button type="button" className="dashboard-share-close" onClick={() => setIsShareModalOpen(false)}>
+                x
+              </button>
+            </div>
+
+            <form className="dashboard-share-form" onSubmit={handleInviteWorkspaceMember}>
+              <div className="dashboard-share-invite-row">
+                <input
+                  className="dashboard-modal-input"
+                  value={inviteEmail}
+                  onChange={(event) => {
+                    setInviteEmail(event.target.value);
+                    if (inviteError) {
+                      setInviteError('');
+                    }
+                  }}
+                  placeholder="Địa chỉ email"
+                  autoFocus
+                />
+                <select
+                  className="dashboard-share-role"
+                  value={inviteRole}
+                  onChange={(event) => setInviteRole(event.target.value as 'Thành viên' | 'Quản trị viên')}
+                >
+                  <option value="Thành viên">Thành viên</option>
+                  {canInviteAdmin ? <option value="Quản trị viên">Quản trị viên</option> : null}
+                </select>
+                <button type="submit" className="dashboard-modal-submit">
+                  Chia sẻ
+                </button>
+              </div>
+            </form>
+
+            {inviteError ? <p className="dashboard-modal-error">{inviteError}</p> : null}
+            {memberActionError ? <p className="dashboard-modal-error">{memberActionError}</p> : null}
+
+            <div className="dashboard-share-tabs">
+              <button type="button" className="dashboard-share-tab is-active">
+                Thành viên workspace <span>{workspaceMembers.length}</span>
+              </button>
+            </div>
+
+            <div className="dashboard-share-members">
+              {workspaceMembers.map((member) => (
+                <div key={member.userId} className="dashboard-share-member-item">
+                  <div className="dashboard-share-member-meta">
+                    <strong>{member.fullName}{member.userId === currentUser?.userId ? ' (bạn)' : ''}</strong>
+                    <p>{member.email} • {roleLabelMap[member.role]}</p>
+                  </div>
+                  <div className="dashboard-share-member-actions">
+                    {canManageMemberRole(member) ? (
+                      <select
+                        className="dashboard-share-member-role"
+                        value={member.role}
+                        onChange={(event) => {
+                          const nextRole = event.target.value as 'Admin' | 'Member';
+                          void handleUpdateMemberRole(member, nextRole);
+                        }}
+                      >
+                        <option value="Member">Thành viên</option>
+                        {selectedWorkspace?.role === 'Owner' ? <option value="Admin">Quản trị viên</option> : null}
+                      </select>
+                    ) : (
+                      <button type="button" className="dashboard-share-member-role" disabled>
+                        {roleLabelMap[member.role]}
+                      </button>
+                    )}
+
+                    {canRemoveMember(member) ? (
+                      <button
+                        type="button"
+                        className="dashboard-share-member-remove"
+                        onClick={() => {
+                          void handleRemoveMemberFromWorkspace(member);
+                        }}
+                      >
+                        Xóa
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <ConfirmModal
+        isOpen={confirmState.isOpen}
+        title={confirmState.title}
+        message={confirmState.message}
+        confirmLabel={confirmState.confirmLabel}
+        cancelLabel={confirmState.cancelLabel}
+        isDanger={confirmState.isDanger}
+        isSubmitting={isConfirmSubmitting}
+        onCancel={handleCloseConfirm}
+        onConfirm={handleConfirm}
+      />
     </div>
   );
 }

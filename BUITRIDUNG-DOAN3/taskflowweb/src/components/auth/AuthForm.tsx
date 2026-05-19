@@ -92,7 +92,7 @@ function AuthForm({
         {submitSuccess ? <p className="auth-feedback auth-feedback--success">{submitSuccess}</p> : null}
 
         <button type="submit" className="auth-submit-button" disabled={isSubmitting}>
-          {isSubmitting ? 'Dang xu ly...' : submitLabel}
+          {isSubmitting ? 'Đang xử lý...' : submitLabel}
         </button>
       </form>
 

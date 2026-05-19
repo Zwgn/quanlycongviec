@@ -41,14 +41,14 @@ app.use("/api/task-assignees", taskAssigneesRouter);
 app.get("/health", (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
-    message: "Server is running"
+    message: "Máy chủ đang hoạt động"
   });
 });
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
     success: false,
-    message: "Route not found"
+    message: "Không tìm thấy đường dẫn"
   });
 });
 
@@ -63,7 +63,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
   res.status(500).json({
     success: false,
-    message: "Internal server error"
+    message: "Lỗi máy chủ nội bộ"
   });
 });
 

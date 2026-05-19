@@ -3,6 +3,20 @@ import { AppError } from "../services/auth.service";
 import { workspacesService } from "../services/workspaces.service";
 import { AuthenticatedRequest } from "../middlewares/auth.middleware";
 
+const normalizeWorkspaceMemberRole = (rawRole: unknown): "Admin" | "Member" => {
+  const value = String(rawRole ?? "").trim();
+
+  if (value === "Admin" || value.toLowerCase() === "admin" || value === "Quản trị viên") {
+    return "Admin";
+  }
+
+  if (value === "Member" || value.toLowerCase() === "member" || value === "Thành viên") {
+    return "Member";
+  }
+
+  throw new AppError("Role không hợp lệ", 400);
+};
+
 const handleErrorResponse = (res: Response, error: unknown): void => {
   if (error instanceof AppError) {
     res.status(error.statusCode).json({
@@ -14,7 +28,7 @@ const handleErrorResponse = (res: Response, error: unknown): void => {
 
   res.status(500).json({
     success: false,
-    message: "Internal server error"
+    message: "Lỗi máy chủ nội bộ"
   });
 };
 
@@ -24,7 +38,7 @@ export const getWorkspacesController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
 
     const workspaces = await workspacesService.getByUser(req.user.userId);
@@ -44,7 +58,7 @@ export const createWorkspaceController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
 
     const workspace = await workspacesService.create({
@@ -67,7 +81,7 @@ export const updateWorkspaceController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
 
     const workspace = await workspacesService.update({
@@ -92,7 +106,7 @@ export const deleteWorkspaceController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
 
     const result = await workspacesService.remove(Number(req.params.workspaceId), req.user.userId);
@@ -112,7 +126,7 @@ export const getWorkspaceMembersController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
 
     const members = await workspacesService.getMembers(
@@ -135,13 +149,15 @@ export const addWorkspaceMemberController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
+
+    const normalizedRole = normalizeWorkspaceMemberRole(req.body?.role ?? "Member");
 
     const member = await workspacesService.addMember({
       workspaceId: Number(req.params.workspaceId),
       email: String(req.body?.email ?? ""),
-      role: (req.body?.role ?? "Member") as "Admin" | "Member",
+      role: normalizedRole,
       userId: req.user.userId
     });
 
@@ -160,13 +176,15 @@ export const updateWorkspaceMemberRoleController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
+
+    const normalizedRole = normalizeWorkspaceMemberRole(req.body?.role ?? "Member");
 
     const member = await workspacesService.updateMemberRole({
       workspaceId: Number(req.params.workspaceId),
       memberUserId: Number(req.params.memberUserId),
-      role: (req.body?.role ?? "Member") as "Admin" | "Member",
+      role: normalizedRole,
       userId: req.user.userId
     });
 
@@ -185,7 +203,7 @@ export const removeWorkspaceMemberController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
 
     const result = await workspacesService.removeMember({

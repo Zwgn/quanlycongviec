@@ -12,7 +12,7 @@ const handleErrorResponse = (res: Response, error: unknown): void => {
 
   res.status(500).json({
     success: false,
-    message: "Internal server error"
+    message: "Lỗi máy chủ nội bộ"
   });
 };
 
@@ -35,8 +35,21 @@ export const loginController = async (req: Request, res: Response): Promise<void
 
     res.status(200).json({
       success: true,
-      message: "Login successful",
+      message: "Đăng nhập thành công",
       data: result
+    });
+  } catch (error: unknown) {
+    handleErrorResponse(res, error);
+  }
+};
+
+export const forgotPasswordController = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await authService.forgotPassword(req.body);
+
+    res.status(200).json({
+      success: true,
+      message: result.message
     });
   } catch (error: unknown) {
     handleErrorResponse(res, error);

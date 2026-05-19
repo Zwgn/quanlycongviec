@@ -1,6 +1,7 @@
 import sql from "mssql";
 import { getDBPool } from "../config/db";
 import { generateAccessToken } from "../utils/jwt";
+import { sendNewPasswordEmail } from "./mail.service";
 
 interface RegisterInput {
   email: string;
@@ -11,6 +12,10 @@ interface RegisterInput {
 interface LoginInput {
   email: string;
   password: string;
+}
+
+interface ForgotPasswordInput {
+  email: string;
 }
 
 interface DbUser {
@@ -42,29 +47,29 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const validateRegisterInput = ({ email, password, fullName }: RegisterInput): void => {
   if (!email || !password || !fullName) {
-    throw new AppError("Email, password and fullName are required", 400);
+    throw new AppError("Email, mật khẩu và họ tên là bắt buộc", 400);
   }
 
   if (!emailRegex.test(email)) {
-    throw new AppError("Invalid email format", 400);
+    throw new AppError("Email không đúng định dạng", 400);
   }
 
   if (password.length < 6) {
-    throw new AppError("Password must be at least 6 characters", 400);
+    throw new AppError("Mật khẩu phải có ít nhất 6 ký tự", 400);
   }
 
   if (fullName.trim().length < 2) {
-    throw new AppError("Full name must be at least 2 characters", 400);
+    throw new AppError("Họ tên phải có ít nhất 2 ký tự", 400);
   }
 };
 
 const validateLoginInput = ({ email, password }: LoginInput): void => {
   if (!email || !password) {
-    throw new AppError("Email and password are required", 400);
+    throw new AppError("Email và mật khẩu là bắt buộc", 400);
   }
 
   if (!emailRegex.test(email)) {
-    throw new AppError("Invalid email format", 400);
+    throw new AppError("Email không đúng định dạng", 400);
   }
 };
 
@@ -82,16 +87,16 @@ export const authService = {
         .input("fullName", sql.NVarChar(255), input.fullName)
         .execute("sp_User_Register");
 
-      return { message: "Register successful" };
+      return { message: "Đăng ký thành công" };
     } catch (error: unknown) {
       const dbError = error as { number?: number; originalError?: { info?: { number?: number } } };
       const sqlErrorNumber = dbError.number ?? dbError.originalError?.info?.number;
 
       if (sqlErrorNumber === 2627 || sqlErrorNumber === 2601) {
-        throw new AppError("Email already exists", 409);
+        throw new AppError("Email đã tồn tại", 409);
       }
 
-      throw new AppError("Register failed", 500);
+      throw new AppError("Đăng ký thất bại", 500);
     }
   },
 
@@ -108,7 +113,7 @@ export const authService = {
     const user = result.recordset?.[0] as DbUser | undefined;
 
     if (!user) {
-      throw new AppError("Invalid email or password", 401);
+      throw new AppError("Email hoặc mật khẩu không đúng", 401);
     }
 
     const accessToken = generateAccessToken({
@@ -124,7 +129,48 @@ export const authService = {
         fullName: user.fullName
       }
     };
-  }
-};
+  },
 
+  async forgotPassword(input: ForgotPasswordInput): Promise<{ message: string }> {
+    const normalizedEmail = input.email?.trim().toLowerCase();
+
+    if (!normalizedEmail || !emailRegex.test(normalizedEmail)) {
+      throw new AppError("Email không đúng định dạng", 400);
+    }
+
+    const pool = await getDBPool();
+
+    try {
+      // Check if user exists
+      const userResult = await pool
+        .request()
+        .input("email", sql.NVarChar(255), normalizedEmail)
+        .query("SELECT userId FROM [User] WHERE email = @email");
+
+      if (!userResult.recordset || userResult.recordset.length === 0) {
+        throw new AppError("Không tìm thấy email", 404);
+      }
+
+      // Generate new random password (8 characters)
+      const newPassword = Math.random().toString(36).substring(2, 10);
+
+      // Update password in database
+      await pool
+        .request()
+        .input("email", sql.NVarChar(255), normalizedEmail)
+        .input("password", sql.NVarChar(255), newPassword)
+        .query("UPDATE [User] SET password = @password WHERE email = @email");
+
+      // Send email with new password
+      await sendNewPasswordEmail(normalizedEmail, newPassword);
+
+      return { message: "Mật khẩu mới đã được gửi về email" };
+    } catch (error: unknown) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError("Không thể xử lý yêu cầu quên mật khẩu", 500);
+    }
+  }
+}
 export { AppError };

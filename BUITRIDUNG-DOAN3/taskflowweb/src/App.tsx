@@ -10,25 +10,83 @@ import './App.css';
 
 type AppView = 'landing' | 'login' | 'register' | 'dashboard' | 'kanban' | 'account';
 
+const LAST_VIEW_KEY = 'taskflow_last_view';
+const LAST_PROJECT_ID_KEY = 'taskflow_last_project_id';
+const LAST_PROJECT_NAME_KEY = 'taskflow_last_project_name';
+
 const hasAccessToken = (): boolean => {
   const token = localStorage.getItem('taskflow_access_token');
   return Boolean(token);
 };
 
+const getStoredProjectId = (): number | null => {
+  const raw = localStorage.getItem(LAST_PROJECT_ID_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const getStoredProjectName = (): string => localStorage.getItem(LAST_PROJECT_NAME_KEY) ?? '';
+
+const getInitialView = (): AppView => {
+  if (!hasAccessToken()) {
+    return 'landing';
+  }
+
+  const lastView = localStorage.getItem(LAST_VIEW_KEY) as AppView | null;
+  if (lastView === 'kanban') {
+    return getStoredProjectId() ? 'kanban' : 'dashboard';
+  }
+
+  if (lastView === 'account') {
+    return 'account';
+  }
+
+  return 'dashboard';
+};
+
 function App() {
-  const [view, setView] = useState<AppView>(hasAccessToken() ? 'dashboard' : 'landing');
+  const [view, setView] = useState<AppView>(getInitialView);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(hasAccessToken);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-  const [selectedProjectName, setSelectedProjectName] = useState<string>('');
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(() =>
+    hasAccessToken() ? getStoredProjectId() : null
+  );
+  const [selectedProjectName, setSelectedProjectName] = useState<string>(() =>
+    hasAccessToken() ? getStoredProjectName() : ''
+  );
+
+  const persistProjectSelection = useCallback((projectId: number, projectName?: string) => {
+    setSelectedProjectId(projectId);
+    localStorage.setItem(LAST_PROJECT_ID_KEY, String(projectId));
+
+    if (projectName !== undefined) {
+      setSelectedProjectName(projectName);
+      localStorage.setItem(LAST_PROJECT_NAME_KEY, projectName);
+    }
+  }, []);
 
   const handleLogout = useCallback((nextView: AppView = 'landing') => {
     localStorage.removeItem('taskflow_access_token');
     localStorage.removeItem('taskflow_user');
+    localStorage.removeItem(LAST_VIEW_KEY);
+    localStorage.removeItem(LAST_PROJECT_ID_KEY);
+    localStorage.removeItem(LAST_PROJECT_NAME_KEY);
     setIsAuthenticated(false);
     setSelectedProjectId(null);
     setSelectedProjectName('');
     setView(nextView);
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    localStorage.setItem(LAST_VIEW_KEY, view);
+  }, [isAuthenticated, view]);
 
   useEffect(() => {
     const handleAuthExpired = () => {
@@ -68,8 +126,7 @@ function App() {
     return (
       <DashboardPage
         onOpenProject={(project) => {
-          setSelectedProjectId(project.projectId);
-          setSelectedProjectName(project.name);
+          persistProjectSelection(project.projectId, project.name);
           setView('kanban');
         }}
         onOpenAccountSettings={() => setView('account')}
@@ -84,7 +141,7 @@ function App() {
         projectId={selectedProjectId ?? 0}
         initialProjectName={selectedProjectName}
         onSwitchProject={(projectId: number) => {
-          setSelectedProjectId(projectId);
+          persistProjectSelection(projectId);
         }}
         onLogout={handleLogout}
         onBackToDashboard={() => {
@@ -102,8 +159,7 @@ function App() {
       <AccountManagementPage
         onBackToDashboard={() => setView('dashboard')}
         onOpenProject={(project) => {
-          setSelectedProjectId(project.projectId);
-          setSelectedProjectName(project.name);
+          persistProjectSelection(project.projectId, project.name);
           setView('kanban');
         }}
         onLogout={handleLogout}

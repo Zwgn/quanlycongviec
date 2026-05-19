@@ -87,3 +87,41 @@ export const createWorkspace = async (name: string): Promise<Workspace> => {
 
   return parseData<Workspace>(response);
 };
+
+export const updateWorkspace = async (
+  workspaceId: number,
+  input: { name: string; description?: string }
+): Promise<{
+  workspaceId: number;
+  name: string;
+  description: string | null;
+  ownerId: number;
+  createdAt: string;
+}> => {
+  const response = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(input),
+  });
+
+  return parseData(response);
+};
+
+export const deleteWorkspace = async (workspaceId: number): Promise<string> => {
+  const response = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+
+  const body = (await parseJsonBody(response)) as ApiResponse<null> | null;
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      handleAuthExpired();
+      throw new Error('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.');
+    }
+    throw new Error(getResponseMessage(body, 'Không thể xóa không gian làm việc.'));
+  }
+
+  return getResponseMessage(body, 'Đã xóa không gian làm việc thành công.');
+};

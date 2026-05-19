@@ -280,11 +280,35 @@ export const tasksService = {
 
       const task = result.recordset?.[0] as TaskItem | undefined;
 
-      if (!task) {
+      if (task) {
+        return task;
+      }
+
+      const fallbackTaskLookup = await pool
+        .request()
+        .input("taskId", sql.Int, input.taskId)
+        .query(`
+          SELECT
+            taskId,
+            listId,
+            title,
+            label,
+            description,
+            dueDate,
+            priority,
+            status,
+            position
+          FROM Task
+          WHERE taskId = @taskId
+        `);
+
+      const fallbackTask = fallbackTaskLookup.recordset?.[0] as TaskItem | undefined;
+
+      if (!fallbackTask) {
         throw new AppError("Cập nhật nhiệm vụ thất bại", 500);
       }
 
-      return task;
+      return fallbackTask;
     } catch (error: unknown) {
       mapTaskError(error, "cập nhật");
       throw error;

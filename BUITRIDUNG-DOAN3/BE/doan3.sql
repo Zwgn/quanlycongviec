@@ -152,7 +152,7 @@ CREATE TABLE Activity (
     CONSTRAINT FK_Activity_Task FOREIGN KEY (taskId) REFERENCES Task(taskId),
     CONSTRAINT FK_Activity_User FOREIGN KEY (userId) REFERENCES [User](userId)
 )
-
+Select * from Attachment
 
 CREATE INDEX IDX_Task_ListId ON Task(listId);
 
@@ -221,14 +221,30 @@ BEGIN
         w.name,
         CASE
             WHEN w.ownerId = @userId THEN N'Owner'
-            ELSE CAST(ISNULL(wm.role, N'Member') AS NVARCHAR(50))
+            ELSE CAST(
+                CASE
+                    WHEN wm.userId IS NOT NULL THEN ISNULL(wm.role, N'Member')
+                    WHEN pmw.hasProjectAccess = 1 THEN N'Member'
+                    ELSE N'Member'
+                END
+                AS NVARCHAR(50)
+            )
         END AS role
     FROM Workspace w
     LEFT JOIN WorkspaceMember wm
         ON wm.workspaceId = w.workspaceId
        AND wm.userId = @userId
+    OUTER APPLY (
+        SELECT TOP 1 1 AS hasProjectAccess
+        FROM Project p
+        INNER JOIN ProjectMember pm
+            ON pm.projectId = p.projectId
+           AND pm.userId = @userId
+        WHERE p.workspaceId = w.workspaceId
+    ) pmw
     WHERE w.ownerId = @userId
        OR wm.userId = @userId
+       OR pmw.hasProjectAccess = 1
     ORDER BY w.createdAt DESC;
 END
 GO
@@ -435,6 +451,8 @@ BEGIN
 
     DECLARE @requesterRole NVARCHAR(50);
     DECLARE @targetUserId INT;
+    DECLARE @projectRole NVARCHAR(50);
+    DECLARE @workspaceMemberId INT;
 
     SELECT
         @requesterRole = CASE
@@ -506,6 +524,24 @@ BEGIN
     INSERT INTO WorkspaceMember (userId, workspaceId, role)
     VALUES (@targetUserId, @workspaceId, @role);
 
+    SET @workspaceMemberId = SCOPE_IDENTITY();
+
+    SET @projectRole = CASE WHEN @role = N'Admin' THEN N'Admin' ELSE N'Member' END;
+
+    MERGE ProjectMember AS target
+    USING (
+        SELECT p.projectId
+        FROM Project p
+        WHERE p.workspaceId = @workspaceId
+    ) AS source
+    ON target.projectId = source.projectId
+       AND target.userId = @targetUserId
+    WHEN MATCHED THEN
+        UPDATE SET role = @projectRole
+    WHEN NOT MATCHED THEN
+        INSERT (userId, projectId, role)
+        VALUES (@targetUserId, source.projectId, @projectRole);
+
     SELECT
         u.userId,
         u.fullName,
@@ -514,7 +550,7 @@ BEGIN
         wm.joinedAt
     FROM WorkspaceMember wm
     INNER JOIN [User] u ON u.userId = wm.userId
-    WHERE wm.id = SCOPE_IDENTITY();
+    WHERE wm.id = @workspaceMemberId;
 END
 GO
 
@@ -593,6 +629,13 @@ BEGIN
     WHERE workspaceId = @workspaceId
       AND userId = @memberUserId;
 
+        UPDATE pm
+        SET pm.role = CASE WHEN @role = N'Admin' THEN N'Admin' ELSE N'Member' END
+        FROM ProjectMember pm
+        INNER JOIN Project p ON p.projectId = pm.projectId
+        WHERE p.workspaceId = @workspaceId
+            AND pm.userId = @memberUserId;
+
     SELECT
         u.userId,
         u.fullName,
@@ -666,11 +709,119 @@ BEGIN
         RETURN;
     END
 
-    DELETE FROM WorkspaceMember
+        DELETE pm
+        FROM ProjectMember pm
+        INNER JOIN Project p ON p.projectId = pm.projectId
+        WHERE p.workspaceId = @workspaceId
+            AND pm.userId = @memberUserId;
+
+        DELETE FROM WorkspaceMember
     WHERE workspaceId = @workspaceId
       AND userId = @memberUserId;
 
     SELECT CAST(N'Xóa thành viên khỏi Workspace thành công' AS NVARCHAR(255)) AS message;
+END
+GO
+
+-- Dong bo quyen ProjectMember theo role cua WorkspaceMember (hoac owner)
+CREATE OR ALTER PROCEDURE sp_ProjectMember_SyncByWorkspaceUser
+    @workspaceId INT,
+    @userId INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @resolvedRole NVARCHAR(50);
+    DECLARE @projectRole NVARCHAR(50);
+
+    SELECT
+        @resolvedRole = CASE
+            WHEN w.ownerId = @userId THEN N'Owner'
+            ELSE ISNULL(wm.role, N'')
+        END
+    FROM Workspace w
+    LEFT JOIN WorkspaceMember wm
+        ON wm.workspaceId = w.workspaceId
+       AND wm.userId = @userId
+    WHERE w.workspaceId = @workspaceId;
+
+    IF @resolvedRole IS NULL OR @resolvedRole = N''
+    BEGIN
+        RAISERROR(N'Forbidden', 16, 1);
+        RETURN;
+    END
+
+    IF @resolvedRole = N'Owner'
+    BEGIN
+        RETURN;
+    END
+
+    SET @projectRole = CASE WHEN @resolvedRole = N'Admin' THEN N'Admin' ELSE N'Member' END;
+
+    MERGE ProjectMember AS target
+    USING (
+        SELECT p.projectId
+        FROM Project p
+        WHERE p.workspaceId = @workspaceId
+    ) AS source
+    ON target.projectId = source.projectId
+       AND target.userId = @userId
+    WHEN MATCHED THEN
+        UPDATE SET role = @projectRole
+    WHEN NOT MATCHED THEN
+        INSERT (userId, projectId, role)
+        VALUES (@userId, source.projectId, @projectRole);
+END
+GO
+
+-- Dong bo quyen ProjectMember cho mot member trong toan bo project cua workspace
+CREATE OR ALTER PROCEDURE sp_ProjectMember_SyncWorkspaceMember
+    @workspaceId INT,
+    @memberUserId INT,
+    @role NVARCHAR(50)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @projectRole NVARCHAR(50);
+
+    IF @role NOT IN (N'Admin', N'Member')
+    BEGIN
+        RAISERROR(N'Role không hợp lệ', 16, 1);
+        RETURN;
+    END
+
+    SET @projectRole = CASE WHEN @role = N'Admin' THEN N'Admin' ELSE N'Member' END;
+
+    MERGE ProjectMember AS target
+    USING (
+        SELECT p.projectId
+        FROM Project p
+        WHERE p.workspaceId = @workspaceId
+    ) AS source
+    ON target.projectId = source.projectId
+       AND target.userId = @memberUserId
+    WHEN MATCHED THEN
+        UPDATE SET role = @projectRole
+    WHEN NOT MATCHED THEN
+        INSERT (userId, projectId, role)
+        VALUES (@memberUserId, source.projectId, @projectRole);
+END
+GO
+
+-- Xoa quyen ProjectMember cua member trong toan bo project cua workspace
+CREATE OR ALTER PROCEDURE sp_ProjectMember_RemoveByWorkspaceMember
+    @workspaceId INT,
+    @memberUserId INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DELETE pm
+    FROM ProjectMember pm
+    INNER JOIN Project p ON p.projectId = pm.projectId
+    WHERE p.workspaceId = @workspaceId
+      AND pm.userId = @memberUserId;
 END
 GO
 
@@ -689,7 +840,18 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+             AND (
+                     w.ownerId = @userId
+                 OR wm.userId = @userId
+                 OR EXISTS (
+                          SELECT 1
+                          FROM Project p0
+                          INNER JOIN ProjectMember pm0
+                                ON pm0.projectId = p0.projectId
+                              AND pm0.userId = @userId
+                          WHERE p0.workspaceId = @workspaceId
+                 )
+             )
     )
     BEGIN
         RAISERROR(N'Forbidden', 16, 1);
@@ -704,12 +866,16 @@ BEGIN
     FROM Project p
     LEFT JOIN Workspace w
         ON w.workspaceId = p.workspaceId
+    LEFT JOIN WorkspaceMember wm
+        ON wm.workspaceId = w.workspaceId
+       AND wm.userId = @userId
     LEFT JOIN ProjectMember pm
         ON pm.projectId = p.projectId
        AND pm.userId = @userId
     WHERE p.workspaceId = @workspaceId
       AND (
           w.ownerId = @userId
+          OR wm.userId = @userId
           OR pm.userId = @userId
       )
     ORDER BY p.createdAt DESC;
@@ -862,27 +1028,55 @@ BEGIN
         RETURN;
     END
 
-    IF EXISTS (
-        SELECT 1
-        FROM Board b
-        INNER JOIN [List] l ON l.boardId = b.boardId
-        INNER JOIN Task t ON t.listId = l.listId
-        WHERE b.projectId = @projectId
-    )
-    BEGIN
-        RAISERROR(N'Không thể xóa Project vì vẫn còn Task. Vui lòng xóa Task trước.', 16, 1);
-        RETURN;
-    END
+    -- Xóa toàn bộ dữ liệu Kanban thuộc project trước khi xóa project
+    DELETE ta
+    FROM TaskAssignee ta
+    INNER JOIN Task t ON t.taskId = ta.taskId
+    INNER JOIN [List] l ON l.listId = t.listId
+    INNER JOIN Board b ON b.boardId = l.boardId
+    WHERE b.projectId = @projectId;
 
-    IF EXISTS (
-        SELECT 1
-        FROM Board b
-        WHERE b.projectId = @projectId
-    )
-    BEGIN
-        RAISERROR(N'Không thể xóa Project vì vẫn còn Board. Vui lòng xóa Board trước.', 16, 1);
-        RETURN;
-    END
+    DELETE c
+    FROM Comment c
+    INNER JOIN Task t ON t.taskId = c.taskId
+    INNER JOIN [List] l ON l.listId = t.listId
+    INNER JOIN Board b ON b.boardId = l.boardId
+    WHERE b.projectId = @projectId;
+
+    DELETE a
+    FROM Attachment a
+    INNER JOIN Task t ON t.taskId = a.taskId
+    INNER JOIN [List] l ON l.listId = t.listId
+    INNER JOIN Board b ON b.boardId = l.boardId
+    WHERE b.projectId = @projectId;
+
+    DELETE ac
+    FROM Activity ac
+    INNER JOIN Task t ON t.taskId = ac.taskId
+    INNER JOIN [List] l ON l.listId = t.listId
+    INNER JOIN Board b ON b.boardId = l.boardId
+    WHERE b.projectId = @projectId;
+
+    DELETE ci
+    FROM ChecklistItem ci
+    INNER JOIN Task t ON t.taskId = ci.taskId
+    INNER JOIN [List] l ON l.listId = t.listId
+    INNER JOIN Board b ON b.boardId = l.boardId
+    WHERE b.projectId = @projectId;
+
+    DELETE t
+    FROM Task t
+    INNER JOIN [List] l ON l.listId = t.listId
+    INNER JOIN Board b ON b.boardId = l.boardId
+    WHERE b.projectId = @projectId;
+
+    DELETE l
+    FROM [List] l
+    INNER JOIN Board b ON b.boardId = l.boardId
+    WHERE b.projectId = @projectId;
+
+    DELETE FROM Board
+    WHERE projectId = @projectId;
 
     DELETE FROM ProjectMember
     WHERE projectId = @projectId;
@@ -1025,17 +1219,6 @@ BEGIN
     BEGIN
         RAISERROR(N'Người dùng đã là Owner của Project', 16, 1);
         RETURN;
-    END
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM WorkspaceMember wm
-        WHERE wm.workspaceId = @workspaceId
-          AND wm.userId = @targetUserId
-    )
-    BEGIN
-        INSERT INTO WorkspaceMember (userId, workspaceId, role)
-        VALUES (@targetUserId, @workspaceId, N'Member');
     END
 
     IF EXISTS (
@@ -1231,21 +1414,30 @@ BEGIN
     DECLARE @workspaceId INT;
     DECLARE @defaultBoardName NVARCHAR(255);
 
+    -- Uu tien xem @boardId nhu projectId truoc de tranh xung dot ID
     SELECT
-        @resolvedBoardId = b.boardId,
-        @projectId = b.projectId,
+        @projectId = p.projectId,
         @workspaceId = p.workspaceId
-    FROM Board b
-    INNER JOIN Project p ON p.projectId = b.projectId
-    WHERE b.boardId = @boardId;
+    FROM Project p
+    WHERE p.projectId = @boardId;
 
-    IF @resolvedBoardId IS NULL
+    IF @projectId IS NOT NULL
+    BEGIN
+        SELECT TOP 1 @resolvedBoardId = b.boardId
+        FROM Board b
+        WHERE b.projectId = @projectId
+        ORDER BY b.createdAt ASC, b.boardId ASC;
+    END
+
+    IF @projectId IS NULL
     BEGIN
         SELECT
+            @resolvedBoardId = b.boardId,
             @projectId = p.projectId,
             @workspaceId = p.workspaceId
-        FROM Project p
-        WHERE p.projectId = @boardId;
+        FROM Board b
+        INNER JOIN Project p ON p.projectId = b.projectId
+        WHERE b.boardId = @boardId;
 
         IF @projectId IS NULL
         BEGIN
@@ -1258,11 +1450,14 @@ BEGIN
         SELECT 1
                 FROM Project p
                 INNER JOIN Workspace w ON w.workspaceId = p.workspaceId
+            LEFT JOIN WorkspaceMember wm
+                ON wm.workspaceId = w.workspaceId
+                 AND wm.userId = @userId
                 LEFT JOIN ProjectMember pm
                         ON pm.projectId = p.projectId
                      AND pm.userId = @userId
                 WHERE p.projectId = @projectId
-                    AND (w.ownerId = @userId OR pm.userId = @userId)
+                AND (w.ownerId = @userId OR wm.userId = @userId OR pm.userId = @userId)
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -1360,7 +1555,17 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin'))
+                    AND (
+                                w.ownerId = @userId
+                         OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                                            AND ISNULL(pm.role, N'') IN (N'Owner', N'Admin')
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -1404,6 +1609,72 @@ BEGIN
 END
 GO
 
+-- Cap nhat tieu de list (phuc vu PUT /api/lists/:listId)
+CREATE OR ALTER PROCEDURE sp_List_Update
+    @listId INT,
+    @name NVARCHAR(255),
+    @userId INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @workspaceId INT;
+    DECLARE @boardId INT;
+    DECLARE @projectId INT;
+
+    SELECT
+        @workspaceId = p.workspaceId,
+        @boardId = l.boardId,
+        @projectId = p.projectId
+    FROM [List] l
+    INNER JOIN Board b ON b.boardId = l.boardId
+    INNER JOIN Project p ON p.projectId = b.projectId
+    WHERE l.listId = @listId;
+
+    IF @workspaceId IS NULL
+    BEGIN
+        RAISERROR(N'Không tìm thấy List', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM Workspace w
+        LEFT JOIN WorkspaceMember wm
+            ON wm.workspaceId = w.workspaceId
+           AND wm.userId = @userId
+        WHERE w.workspaceId = @workspaceId
+                    AND (
+                                w.ownerId = @userId
+                         OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                                            AND ISNULL(pm.role, N'') IN (N'Owner', N'Admin')
+                         )
+                    )
+    )
+    BEGIN
+        RAISERROR(N'Không có quyền', 16, 1);
+        RETURN;
+    END
+
+    UPDATE [List]
+    SET name = @name
+    WHERE listId = @listId;
+
+    SELECT
+        l.listId,
+        l.boardId,
+        l.name,
+        l.position
+    FROM [List] l
+    WHERE l.listId = @listId;
+END
+GO
+
 -- Xoa list (phuc vu DELETE /api/lists/:listId)
 CREATE OR ALTER PROCEDURE sp_List_Delete
     @listId INT,
@@ -1414,11 +1685,13 @@ BEGIN
 
     DECLARE @workspaceId INT;
     DECLARE @boardId INT;
+    DECLARE @projectId INT;
     DECLARE @listPosition INT;
 
     SELECT
         @workspaceId = p.workspaceId,
         @boardId = l.boardId,
+        @projectId = p.projectId,
         @listPosition = l.position
     FROM [List] l
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -1438,7 +1711,17 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin'))
+                    AND (
+                                w.ownerId = @userId
+                         OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                                            AND ISNULL(pm.role, N'') IN (N'Owner', N'Admin')
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -1494,10 +1777,13 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
     DECLARE @nextPosition INT;
     DECLARE @newTaskId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM [List] l
     INNER JOIN Board b ON b.boardId = l.boardId
     INNER JOIN Project p ON p.projectId = b.projectId
@@ -1516,7 +1802,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -1567,7 +1862,10 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
-    SELECT @workspaceId = p.workspaceId
+    DECLARE @projectId INT;
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -1587,7 +1885,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -1697,13 +2004,15 @@ BEGIN
     DECLARE @sourceBoardId INT;
     DECLARE @targetBoardId INT;
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
     DECLARE @targetMax INT;
 
     SELECT
         @sourceListId = t.listId,
         @sourcePosition = ISNULL(t.position, 0),
         @sourceBoardId = b.boardId,
-        @workspaceId = p.workspaceId
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -1742,6 +2051,12 @@ BEGIN
             AND (
                 w.ownerId = @userId
              OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                         OR EXISTS (
+                                    SELECT 1
+                                    FROM ProjectMember pm
+                                    WHERE pm.projectId = @projectId
+                                        AND pm.userId = @userId
+                                )
              OR EXISTS (
                   SELECT 1
                   FROM TaskAssignee ta
@@ -1877,19 +2192,16 @@ BEGIN
                 w.ownerId = @userId
              OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
              OR EXISTS (
+                    SELECT 1
+                    FROM ProjectMember pm
+                    WHERE pm.projectId = @projectId
+                        AND pm.userId = @userId
+                )
+             OR EXISTS (
                   SELECT 1
                   FROM TaskAssignee ta
                   WHERE ta.taskId = @taskId
                     AND ta.userId = @userId
-                                )
-                         OR (
-                                    @isLabelOnlyUpdate = 1
-                                    AND EXISTS (
-                                            SELECT 1
-                                            FROM ProjectMember pm
-                                            WHERE pm.projectId = @projectId
-                                                AND pm.userId = @userId
-                                    )
                 )
             )
     )
@@ -1923,6 +2235,9 @@ BEGIN
         status = COALESCE(@status, status)
     WHERE taskId = @taskId;
 
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã cập nhật thông tin nhiệm vụ');
+
     SELECT
         t.taskId,
         t.listId,
@@ -1947,8 +2262,11 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -1968,7 +2286,17 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin'))
+                    AND (
+                                w.ownerId = @userId
+                         OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                                            AND ISNULL(pm.role, N'') IN (N'Owner', N'Admin')
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -1998,9 +2326,12 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
     DECLARE @maxPosition INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2029,6 +2360,12 @@ BEGIN
           AND (
                 w.ownerId = @userId
              OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                 OR EXISTS (
+                          SELECT 1
+                          FROM ProjectMember pm
+                          WHERE pm.projectId = @projectId
+                             AND pm.userId = @userId
+                 )
                          OR EXISTS (
                                         SELECT 1
                                         FROM TaskAssignee ta
@@ -2068,6 +2405,9 @@ BEGIN
     SET status = N'Đang thực hiện'
     WHERE taskId = @taskId;
 
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã thêm một mục checklist');
+
     SELECT
         id,
         taskId,
@@ -2089,8 +2429,11 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM ChecklistItem ci
     INNER JOIN Task t ON t.taskId = ci.taskId
     INNER JOIN [List] l ON l.listId = t.listId
@@ -2117,7 +2460,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2148,8 +2500,13 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
+    DECLARE @taskId INT;
+    DECLARE @isCompleted BIT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM ChecklistItem ci
     INNER JOIN Task t ON t.taskId = ci.taskId
     INNER JOIN [List] l ON l.listId = t.listId
@@ -2170,7 +2527,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2180,6 +2546,12 @@ BEGIN
     UPDATE ChecklistItem
     SET isCompleted = CASE WHEN isCompleted = 1 THEN 0 ELSE 1 END
     WHERE id = @id;
+
+    SELECT
+        @taskId = ci.taskId,
+        @isCompleted = ci.isCompleted
+    FROM ChecklistItem ci
+    WHERE ci.id = @id;
 
     UPDATE Task
     SET status = CASE
@@ -2211,6 +2583,13 @@ BEGIN
         WHERE id = @id
     );
 
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (
+        @taskId,
+        @userId,
+        CASE WHEN @isCompleted = 1 THEN N'Đã hoàn thành một mục checklist' ELSE N'Đã mở lại một mục checklist' END
+    );
+
     SELECT
         id,
         taskId,
@@ -2232,6 +2611,7 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
     DECLARE @taskId INT;
     DECLARE @sourcePosition INT;
     DECLARE @maxPosition INT;
@@ -2239,7 +2619,8 @@ BEGIN
     SELECT
         @taskId = ci.taskId,
         @sourcePosition = ci.position,
-        @workspaceId = p.workspaceId
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM ChecklistItem ci
     INNER JOIN Task t ON t.taskId = ci.taskId
     INNER JOIN [List] l ON l.listId = t.listId
@@ -2260,7 +2641,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2335,6 +2725,9 @@ BEGIN
         RETURN;
     END CATCH
 
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã sắp xếp lại thứ tự checklist');
+
     SELECT
         id,
         taskId,
@@ -2355,13 +2748,15 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
     DECLARE @taskId INT;
     DECLARE @position INT;
 
     SELECT
         @taskId = ci.taskId,
         @position = ci.position,
-        @workspaceId = p.workspaceId
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM ChecklistItem ci
     INNER JOIN Task t ON t.taskId = ci.taskId
     INNER JOIN [List] l ON l.listId = t.listId
@@ -2382,7 +2777,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2415,6 +2819,9 @@ BEGIN
     END
     WHERE taskId = @taskId;
 
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã xóa một mục checklist');
+
     SELECT CAST(N'Đã xóa mục kiểm tra thành công.' AS NVARCHAR(255)) AS message;
 END
 GO
@@ -2428,8 +2835,11 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2449,7 +2859,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2480,8 +2899,11 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2507,7 +2929,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2516,6 +2947,9 @@ BEGIN
 
     INSERT INTO Comment (taskId, userId, content)
     VALUES (@taskId, @userId, LTRIM(RTRIM(@content)));
+
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã thêm một bình luận');
 
     SELECT
         c.commentId,
@@ -2539,13 +2973,21 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
+    DECLARE @taskId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Comment c
     INNER JOIN Task t ON t.taskId = c.taskId
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
     INNER JOIN Project p ON p.projectId = b.projectId
+    WHERE c.commentId = @commentId;
+
+    SELECT @taskId = c.taskId
+    FROM Comment c
     WHERE c.commentId = @commentId;
 
     IF @workspaceId IS NULL
@@ -2561,7 +3003,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2569,6 +3020,9 @@ BEGIN
     END
 
     DELETE FROM Comment WHERE commentId = @commentId;
+
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã xóa một bình luận');
 
     SELECT CAST(N'Đã xóa bình luận thành công.' AS NVARCHAR(255)) AS message;
 END
@@ -2583,8 +3037,11 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2604,7 +3061,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2634,9 +3100,12 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
     DECLARE @resolvedFileName NVARCHAR(255);
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2662,7 +3131,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2684,6 +3162,9 @@ BEGIN
     INSERT INTO Attachment (taskId, fileName, fileUrl)
     VALUES (@taskId, @resolvedFileName, LTRIM(RTRIM(@fileUrl)));
 
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã thêm một tệp đính kèm');
+
     SELECT
         attachmentId,
         taskId,
@@ -2704,13 +3185,21 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
+    DECLARE @taskId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Attachment a
     INNER JOIN Task t ON t.taskId = a.taskId
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
     INNER JOIN Project p ON p.projectId = b.projectId
+    WHERE a.attachmentId = @attachmentId;
+
+    SELECT @taskId = a.taskId
+    FROM Attachment a
     WHERE a.attachmentId = @attachmentId;
 
     IF @workspaceId IS NULL
@@ -2726,7 +3215,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2734,6 +3232,9 @@ BEGIN
     END
 
     DELETE FROM Attachment WHERE attachmentId = @attachmentId;
+
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (@taskId, @userId, N'Đã xóa một tệp đính kèm');
 
     SELECT CAST(N'Đã xóa tệp đính kèm thành công.' AS NVARCHAR(255)) AS message;
 END
@@ -2748,8 +3249,11 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2769,7 +3273,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2799,8 +3312,11 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2820,7 +3336,16 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR wm.userId = @userId)
+                    AND (
+                                w.ownerId = @userId
+                         OR wm.userId = @userId
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2850,8 +3375,12 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
+    DECLARE @assigneeFullName NVARCHAR(255);
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2871,7 +3400,17 @@ BEGIN
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @userId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @userId OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin'))
+                    AND (
+                                w.ownerId = @userId
+                         OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                         OR EXISTS (
+                                        SELECT 1
+                                        FROM ProjectMember pm
+                                        WHERE pm.projectId = @projectId
+                                            AND pm.userId = @userId
+                                            AND ISNULL(pm.role, N'') IN (N'Owner', N'Admin')
+                         )
+                    )
     )
     BEGIN
         RAISERROR(N'Không có quyền', 16, 1);
@@ -2894,8 +3433,15 @@ BEGIN
         LEFT JOIN WorkspaceMember wm
             ON wm.workspaceId = w.workspaceId
            AND wm.userId = @assigneeUserId
+        LEFT JOIN ProjectMember pm
+            ON pm.projectId = @projectId
+           AND pm.userId = @assigneeUserId
         WHERE w.workspaceId = @workspaceId
-          AND (w.ownerId = @assigneeUserId OR wm.userId = @assigneeUserId)
+          AND (
+                w.ownerId = @assigneeUserId
+             OR wm.userId = @assigneeUserId
+             OR pm.userId = @assigneeUserId
+          )
     )
     BEGIN
         RAISERROR(N'User được gán không thuộc Workspace', 16, 1);
@@ -2915,6 +3461,17 @@ BEGIN
 
     INSERT INTO TaskAssignee (taskId, userId)
     VALUES (@taskId, @assigneeUserId);
+
+    SELECT @assigneeFullName = u.fullName
+    FROM [User] u
+    WHERE u.userId = @assigneeUserId;
+
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (
+        @taskId,
+        @userId,
+        N'Đã giao việc cho ' + ISNULL(@assigneeFullName, N'thành viên')
+    );
 
     SELECT
         ta.id,
@@ -2938,8 +3495,12 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @workspaceId INT;
+    DECLARE @projectId INT;
+    DECLARE @assigneeFullName NVARCHAR(255);
 
-    SELECT @workspaceId = p.workspaceId
+    SELECT
+        @workspaceId = p.workspaceId,
+        @projectId = p.projectId
     FROM Task t
     INNER JOIN [List] l ON l.listId = t.listId
     INNER JOIN Board b ON b.boardId = l.boardId
@@ -2962,6 +3523,13 @@ BEGIN
           AND (
                 w.ownerId = @userId
              OR ISNULL(wm.role, N'') IN (N'Owner', N'Admin')
+                 OR EXISTS (
+                          SELECT 1
+                          FROM ProjectMember pm
+                          WHERE pm.projectId = @projectId
+                             AND pm.userId = @userId
+                             AND ISNULL(pm.role, N'') IN (N'Owner', N'Admin')
+                 )
              OR @userId = @assigneeUserId
           )
     )
@@ -2970,10 +3538,23 @@ BEGIN
         RETURN;
     END
 
+    SELECT @assigneeFullName = u.fullName
+    FROM [User] u
+    WHERE u.userId = @assigneeUserId;
+
     DELETE FROM TaskAssignee
     WHERE taskId = @taskId
       AND userId = @assigneeUserId;
 
+    INSERT INTO Activity (taskId, userId, action)
+    VALUES (
+        @taskId,
+        @userId,
+        N'Đã bỏ giao việc cho ' + ISNULL(@assigneeFullName, N'thành viên')
+    );
+
     SELECT CAST(N'Đã xóa người được giao thành công.' AS NVARCHAR(255)) AS message;
 END
 GO
+
+

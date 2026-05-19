@@ -1,35 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import '../assets/styles/KanbanBoard.css';
-import {
-  addProjectMember,
-  addTaskAssignee,
-  createAttachment,
-  createChecklistItem,
-  createComment,
-  createTask,
-  createList,
-  CurrentUser,
-  deleteAttachment,
-  deleteChecklistItem,
-  deleteComment,
-  deleteTask,
-  deleteList,
-  getBoardData,
-  getCurrentUser,
-  getProjectMembers,
-  getProjectsByWorkspace,
-  getTaskDetail,
-  getUserWorkspaces,
-  moveChecklistItem,
-  moveTask as moveTaskApi,
-  removeProjectMember,
-  removeTaskAssignee,
-  TaskDetailResponse,
-  Workspace,
-  toggleChecklistItem,
-  updateTask,
-  updateProjectMemberRole,
-} from '../services/dashboard.service';
+import ConfirmModal from '../components/common/ConfirmModal';
+import { useKanbanBoardPage } from '../hooks/useKanbanBoardPage';
+import type { Workspace } from '../services/dashboard.service';
 
 type KanbanBoardPageProps = {
   projectId: number;
@@ -40,110 +12,7 @@ type KanbanBoardPageProps = {
   onOpenAccountSettings: () => void;
 };
 
-type BoardHubFilter = 'all' | 'workspace';
-
-type BoardTaskItem = {
-  taskId: number;
-  title: string;
-  description?: string;
-};
-
-type BoardListItem = {
-  listId: number;
-  name: string;
-  tasks: BoardTaskItem[];
-};
-
-type BoardStateData = {
-  projectId: number;
-  projectName: string;
-  lists: BoardListItem[];
-};
-
-type BoardMember = {
-  id: number;
-  fullName: string;
-  email: string;
-  workspaceRole: Workspace['role'];
-  role: 'Chủ sở hữu' | 'Quản trị viên' | 'Thành viên';
-  isCurrentUser?: boolean;
-};
-
-const mapWorkspaceRoleToLabel = (role: Workspace['role']): BoardMember['role'] => {
-  if (role === 'Owner') {
-    return 'Chủ sở hữu';
-  }
-
-  if (role === 'Admin') {
-    return 'Quản trị viên';
-  }
-
-  return 'Thành viên';
-};
-
-type NotificationItem = {
-  id: number;
-  message: string;
-  timeLabel: string;
-  read: boolean;
-};
-
-type TaskLabel = {
-  id: number;
-  name: string;
-  color: string;
-};
-
-type TaskChecklistItem = {
-  id: number;
-  content: string;
-  isCompleted: boolean;
-  position: number;
-};
-
-type TaskAttachment = {
-  attachmentId: number;
-  fileName: string;
-  fileUrl: string;
-  createdAt: string;
-};
-
-type TaskComment = {
-  commentId: number;
-  content: string;
-  userId: number;
-  fullName: string;
-  createdAt: string;
-};
-
-type TaskActivity = {
-  activityId: number;
-  action: string;
-  userId: number;
-  fullName: string;
-  createdAt: string;
-};
-
-type TaskDetailData = {
-  taskId: number;
-  listId: number;
-  title: string;
-  description: string;
-  dueDate: string;
-  priority: 'low' | 'medium' | 'high';
-  status: 'todo' | 'doing' | 'done';
-  createdAt: string;
-  assignees: Array<{
-    userId: number;
-    fullName: string;
-  }>;
-  checklist: TaskChecklistItem[];
-  labels: TaskLabel[];
-  attachments: TaskAttachment[];
-  comments: TaskComment[];
-  activity: TaskActivity[];
-};
-
+// Trang bảng Kanban hiển thị và thao tác công việc.
 function KanbanBoardPage({
   projectId,
   initialProjectName,
@@ -152,1380 +21,136 @@ function KanbanBoardPage({
   onBackToDashboard,
   onOpenAccountSettings,
 }: KanbanBoardPageProps) {
-  const initialBoard = useMemo<BoardStateData>(
-    () => ({
-      projectId,
-      projectName: initialProjectName.trim() || `Project #${projectId}`,
-      lists: [],
-    }),
-    [initialProjectName, projectId]
-  );
-  const [availableProjects, setAvailableProjects] = useState<Array<{
-    workspaceId: number;
-    projectId: number;
-    projectName: string;
-    workspaceName: string;
-    workspaceRole: Workspace['role'];
-  }>>([]);
-  const [projectName, setProjectName] = useState(initialBoard.projectName);
-  const [lists, setLists] = useState<BoardListItem[]>(initialBoard.lists);
-  const [activeBoardId, setActiveBoardId] = useState<number>(projectId);
-  const [isBoardLoading, setIsBoardLoading] = useState(false);
-  const [boardError, setBoardError] = useState('');
-  const [createListError, setCreateListError] = useState('');
-  const [listActionError, setListActionError] = useState('');
-  const [taskActionError, setTaskActionError] = useState('');
-  const [openTaskComposerListId, setOpenTaskComposerListId] = useState<number | null>(null);
-  const [taskDraftByList, setTaskDraftByList] = useState<Record<number, string>>({});
-  const [isAddingList, setIsAddingList] = useState(false);
-  const [newListName, setNewListName] = useState('');
-  const [isBoardHubOpen, setIsBoardHubOpen] = useState(false);
-  const [boardFilter, setBoardFilter] = useState<BoardHubFilter>('all');
-  const [boardSearchKeyword, setBoardSearchKeyword] = useState('');
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'Thành viên' | 'Quản trị viên'>('Thành viên');
-  const [inviteError, setInviteError] = useState('');
-  const [memberActionError, setMemberActionError] = useState('');
-  const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
-  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
-  const [draggingTask, setDraggingTask] = useState<{ taskId: number; sourceListId: number } | null>(null);
-  const [dragOverListId, setDragOverListId] = useState<number | null>(null);
-  const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
-  const [taskDetail, setTaskDetail] = useState<TaskDetailData | null>(null);
-  const [taskDetailById, setTaskDetailById] = useState<Record<number, TaskDetailData>>({});
-  const [taskCommentDraft, setTaskCommentDraft] = useState('');
-  const [taskChecklistDraft, setTaskChecklistDraft] = useState('');
-  const [taskAttachmentDraft, setTaskAttachmentDraft] = useState('');
-  const [taskLabelDraft, setTaskLabelDraft] = useState('');
-  const [taskLabelColorDraft, setTaskLabelColorDraft] = useState('#2f74ff');
-  const [taskAssigneeDraft, setTaskAssigneeDraft] = useState('');
-  const [previewTaskLabelId, setPreviewTaskLabelId] = useState<number | null>(null);
-  const [draggingChecklistItemId, setDraggingChecklistItemId] = useState<number | null>(null);
-  const [dragOverChecklistItemId, setDragOverChecklistItemId] = useState<number | null>(null);
-  const loadingTaskDetailIdsRef = useRef<Set<number>>(new Set());
-
-  const currentWorkspaceName = useMemo(() => {
-    const current = availableProjects.find((item) => item.projectId === projectId);
-    return current?.workspaceName || 'Không gian làm việc hiện tại';
-  }, [availableProjects, projectId]);
-
-  const currentWorkspaceRole = useMemo<Workspace['role'] | null>(() => {
-    const current = availableProjects.find((item) => item.projectId === projectId);
-    return current?.workspaceRole ?? null;
-  }, [availableProjects, projectId]);
-
-  const currentProjectRole = useMemo<Workspace['role'] | null>(() => {
-    const currentMember = boardMembers.find((member) => member.isCurrentUser);
-    return currentMember?.workspaceRole ?? currentWorkspaceRole;
-  }, [boardMembers, currentWorkspaceRole]);
-
-  const canManageWorkspace =
-    currentProjectRole === 'Owner' || currentProjectRole === 'Admin';
-  const canInviteAdmin = currentProjectRole === 'Owner';
-
-  const mapWorkspaceMember = useCallback(
-    (member: { userId: number; fullName: string; email: string; role: Workspace['role'] }): BoardMember => ({
-      id: member.userId,
-      fullName: member.fullName,
-      email: member.email,
-      workspaceRole: member.role,
-      role: mapWorkspaceRoleToLabel(member.role),
-      isCurrentUser: member.userId === currentUser?.userId,
-    }),
-    [currentUser?.userId]
-  );
-
-  const canManageMemberRole = useCallback(
-    (member: BoardMember): boolean => {
-      if (!canManageWorkspace) {
-        return false;
-      }
-
-      if (member.workspaceRole === 'Owner') {
-        return false;
-      }
-
-      if (currentProjectRole === 'Owner') {
-        return true;
-      }
-
-      return currentProjectRole === 'Admin' && member.workspaceRole === 'Member';
-    },
-    [canManageWorkspace, currentProjectRole]
-  );
-
-  const canRemoveMember = useCallback(
-    (member: BoardMember): boolean => {
-      if (!canManageMemberRole(member)) {
-        return false;
-      }
-
-      return !member.isCurrentUser;
-    },
-    [canManageMemberRole]
-  );
-
-  const refreshWorkspaceMembers = useCallback(async () => {
-    if (!currentUser || !projectId || Number.isNaN(projectId)) {
-      return;
-    }
-
-    const members = await getProjectMembers(projectId);
-    setBoardMembers(members.map(mapWorkspaceMember));
-  }, [currentUser, mapWorkspaceMember, projectId]);
-
-  const filteredBoardItems = useMemo(() => {
-    const keyword = boardSearchKeyword.trim().toLowerCase();
-
-    return availableProjects.filter((item) => {
-      if (boardFilter === 'workspace' && item.workspaceName !== currentWorkspaceName) {
-        return false;
-      }
-
-      if (!keyword) {
-        return true;
-      }
-
-      return (
-        item.projectName.toLowerCase().includes(keyword) ||
-        item.workspaceName.toLowerCase().includes(keyword)
-      );
-    });
-  }, [availableProjects, boardFilter, boardSearchKeyword, currentWorkspaceName]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadAvailableProjects = async () => {
-      try {
-        const workspaces = await getUserWorkspaces();
-        const fallbackWorkspaceName = workspaces[0]?.name || 'Không gian làm việc hiện tại';
-        const projectGroups = await Promise.all(
-          workspaces.map(async (workspace) => ({
-            workspaceId: workspace.workspaceId,
-            workspaceName: workspace.name,
-            projects: await getProjectsByWorkspace(workspace.workspaceId),
-          }))
-        );
-
-        if (!isMounted) {
-          return;
-        }
-
-        const uniqueProjects = new Map<
-          number,
-          {
-            workspaceId: number;
-            projectId: number;
-            projectName: string;
-            workspaceName: string;
-            workspaceRole: Workspace['role'];
-          }
-        >();
-
-        projectGroups.forEach((group) => {
-          group.projects.forEach((project) => {
-            uniqueProjects.set(project.projectId, {
-              workspaceId: group.workspaceId,
-              projectId: project.projectId,
-              projectName: project.name,
-              workspaceName: group.workspaceName,
-              workspaceRole: workspaces.find((workspace) => workspace.workspaceId === group.workspaceId)?.role ?? 'Member',
-            });
-          });
-        });
-
-        if (!uniqueProjects.has(projectId)) {
-          uniqueProjects.set(projectId, {
-            workspaceId: workspaces[0]?.workspaceId ?? 0,
-            projectId,
-            projectName: initialBoard.projectName,
-            workspaceName: fallbackWorkspaceName,
-            workspaceRole: workspaces[0]?.role ?? 'Member',
-          });
-        }
-
-        setAvailableProjects(Array.from(uniqueProjects.values()));
-      } catch (_error) {
-        if (!isMounted) {
-          return;
-        }
-
-        setAvailableProjects([
-          {
-            workspaceId: 0,
-            projectId,
-            projectName: initialBoard.projectName,
-            workspaceName: 'Không gian làm việc hiện tại',
-            workspaceRole: 'Member',
-          },
-        ]);
-      }
-    };
-
-    void loadAvailableProjects();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [initialBoard.projectName, projectId]);
-
-  const recentBoardItems = useMemo(() => {
-    const current = filteredBoardItems.find((item) => item.projectId === projectId);
-    const others = filteredBoardItems.filter((item) => item.projectId !== projectId);
-
-    return current ? [current, ...others].slice(0, 4) : others.slice(0, 4);
-  }, [filteredBoardItems, projectId]);
-
-  useEffect(() => {
-    setProjectName(initialBoard.projectName);
-    setLists(initialBoard.lists);
-    setActiveBoardId(projectId);
-    setBoardError('');
-    setCreateListError('');
-    setListActionError('');
-    setOpenTaskComposerListId(null);
-    setTaskDraftByList({});
-    setIsAddingList(false);
-    setNewListName('');
-    setIsBoardHubOpen(false);
-    setBoardFilter('all');
-    setBoardSearchKeyword('');
-    setPreviewTaskLabelId(null);
-  }, [initialBoard, projectId]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadBoardData = async () => {
-      if (!projectId || Number.isNaN(projectId)) {
-        return;
-      }
-
-      setIsBoardLoading(true);
-      setBoardError('');
-
-      try {
-        const boardData = await getBoardData(projectId);
-
-        if (!isMounted) {
-          return;
-        }
-
-        setActiveBoardId(boardData.boardId);
-        setProjectName(boardData.name);
-        setLists(
-          boardData.lists.map((list) => ({
-            listId: list.listId,
-            name: list.name,
-            tasks: list.tasks
-              .sort((a, b) => a.position - b.position)
-              .map((task) => ({
-                taskId: task.taskId,
-                title: task.title,
-              })),
-          }))
-        );
-        setTaskActionError('');
-      } catch (error: unknown) {
-        if (!isMounted) {
-          return;
-        }
-
-        const message =
-          error instanceof Error ? error.message : 'Không thể tải dữ liệu bảng.';
-        setBoardError(message);
-      } finally {
-        if (isMounted) {
-          setIsBoardLoading(false);
-        }
-      }
-    };
-
-    void loadBoardData();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [projectId]);
-
-  const unreadNotifications = useMemo(
-    () => notifications.filter((item) => !item.read).length,
-    [notifications]
-  );
-
-  useEffect(() => {
-    const loadCurrentUser = async () => {
-      try {
-        const user = await getCurrentUser();
-        setCurrentUser(user);
-      } catch (_error) {
-        const rawUser = localStorage.getItem('taskflow_user');
-
-        if (rawUser) {
-          try {
-            const parsed = JSON.parse(rawUser) as Partial<CurrentUser>;
-            if (parsed.fullName && parsed.email) {
-              const fallbackUser: CurrentUser = {
-                userId: Number(parsed.userId ?? 0),
-                fullName: parsed.fullName,
-                email: parsed.email,
-              };
-              setCurrentUser(fallbackUser);
-            }
-          } catch (_parseError) {
-            setCurrentUser(null);
-          }
-        }
-      }
-    };
-
-    void loadCurrentUser();
-  }, []);
-
-  useEffect(() => {
-    if (!currentUser) {
-      setBoardMembers([]);
-      return;
-    }
-
-    if (!projectId || Number.isNaN(projectId)) {
-      setBoardMembers([
-        {
-          id: currentUser.userId,
-          fullName: currentUser.fullName,
-          email: currentUser.email,
-          workspaceRole: currentWorkspaceRole ?? 'Member',
-          role: currentWorkspaceRole ? mapWorkspaceRoleToLabel(currentWorkspaceRole) : 'Thành viên',
-          isCurrentUser: true,
-        },
-      ]);
-      return;
-    }
-
-    let isMounted = true;
-
-    const loadWorkspaceMembers = async () => {
-      try {
-        if (!isMounted) {
-          return;
-        }
-
-        await refreshWorkspaceMembers();
-      } catch (_error) {
-        if (!isMounted) {
-          return;
-        }
-
-        setBoardMembers([
-          {
-            id: currentUser.userId,
-            fullName: currentUser.fullName,
-            email: currentUser.email,
-            workspaceRole: currentWorkspaceRole ?? 'Member',
-            role: currentWorkspaceRole ? mapWorkspaceRoleToLabel(currentWorkspaceRole) : 'Thành viên',
-            isCurrentUser: true,
-          },
-        ]);
-      }
-    };
-
-    void loadWorkspaceMembers();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [currentWorkspaceRole, currentUser, projectId, refreshWorkspaceMembers]);
-
-  useEffect(() => {
-    if (!boardError) {
-      return;
-    }
-
-    window.alert(boardError);
-    setBoardError('');
-  }, [boardError]);
-
-  useEffect(() => {
-    if (!createListError) {
-      return;
-    }
-
-    window.alert(createListError);
-    setCreateListError('');
-  }, [createListError]);
-
-  useEffect(() => {
-    if (!listActionError) {
-      return;
-    }
-
-    window.alert(listActionError);
-    setListActionError('');
-  }, [listActionError]);
-
-  useEffect(() => {
-    if (!taskActionError) {
-      return;
-    }
-
-    window.alert(taskActionError);
-    setTaskActionError('');
-  }, [taskActionError]);
-
-  useEffect(() => {
-    if (!inviteError) {
-      return;
-    }
-
-    window.alert(inviteError);
-    setInviteError('');
-  }, [inviteError]);
-
-  useEffect(() => {
-    if (!memberActionError) {
-      return;
-    }
-
-    window.alert(memberActionError);
-    setMemberActionError('');
-  }, [memberActionError]);
-
-  const handleOpenAddList = () => {
-    setIsAddingList(true);
-    setNewListName('');
-  };
-
-  const handleSubmitAddList = async () => {
-    const trimmed = newListName.trim();
-
-    if (!trimmed) {
-      setCreateListError('Vui lòng nhập tên danh sách nhiệm vụ.');
-      return;
-    }
-
-    try {
-      setCreateListError('');
-      setListActionError('');
-
-      const created = await createList({
-        name: trimmed,
-        boardId: activeBoardId,
-      });
-
-      const nextList: BoardListItem = {
-        listId: created.listId,
-        name: created.name,
-        tasks: [],
-      };
-
-      setLists((prev) => [...prev, nextList]);
-      setNewListName('');
-      setIsAddingList(false);
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Không thể tạo danh sách nhiệm vụ.';
-      setCreateListError(message);
-    }
-  };
-
-  const handleDeleteList = async (listId: number, listName: string) => {
-    const confirmed = window.confirm(`Bạn có chắc muốn xóa list "${listName}"?`);
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      setListActionError('');
-      await deleteList(listId);
-
-      const boardData = await getBoardData(activeBoardId);
-
-      setActiveBoardId(boardData.boardId);
-      setProjectName(boardData.name);
-      setLists(
-        boardData.lists.map((list) => ({
-          listId: list.listId,
-          name: list.name,
-          tasks: list.tasks
-            .sort((a, b) => a.position - b.position)
-            .map((task) => ({
-              taskId: task.taskId,
-              title: task.title,
-            })),
-        }))
-      );
-
-      if (openTaskComposerListId === listId) {
-        setOpenTaskComposerListId(null);
-      }
-
-      setTaskDraftByList((prev) => {
-        const next = { ...prev };
-        delete next[listId];
-        return next;
-      });
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Không thể xóa danh sách nhiệm vụ.';
-      setListActionError(message);
-    }
-  };
-
-  const handleOpenTaskComposer = (listId: number) => {
-    setOpenTaskComposerListId(listId);
-    setTaskDraftByList((prev) => ({
-      ...prev,
-      [listId]: prev[listId] ?? '',
-    }));
-  };
-
-  const handleTaskDraftChange = (listId: number, value: string) => {
-    setTaskDraftByList((prev) => ({
-      ...prev,
-      [listId]: value,
-    }));
-  };
-
-  const handleCancelTaskComposer = (listId: number) => {
-    setOpenTaskComposerListId(null);
-    setTaskDraftByList((prev) => ({
-      ...prev,
-      [listId]: '',
-    }));
-  };
-
-  const handleSubmitAddTask = async (listId: number) => {
-    const trimmed = (taskDraftByList[listId] ?? '').trim();
-
-    if (!trimmed) {
-      return;
-    }
-
-    try {
-      await createTask({ title: trimmed, listId });
-
-      const boardData = await getBoardData(activeBoardId);
-
-      setActiveBoardId(boardData.boardId);
-      setProjectName(boardData.name);
-      setLists(
-        boardData.lists.map((list) => ({
-          listId: list.listId,
-          name: list.name,
-          tasks: list.tasks
-            .sort((a, b) => a.position - b.position)
-            .map((task) => ({
-              taskId: task.taskId,
-              title: task.title,
-            })),
-        }))
-      );
-
-      setTaskDraftByList((prev) => ({
-        ...prev,
-        [listId]: '',
-      }));
-      setOpenTaskComposerListId(null);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Không thể tạo nhiệm vụ.';
-      setTaskActionError(message);
-    }
-  };
-
-  const moveTask = async (targetListId: number, targetTaskId?: number) => {
-    if (!draggingTask) {
-      return;
-    }
-
-    const { taskId, sourceListId } = draggingTask;
-
-    if (sourceListId === targetListId && targetTaskId === taskId) {
-      return;
-    }
-
-    const targetList = lists.find((list) => list.listId === targetListId);
-    if (!targetList) {
-      return;
-    }
-
-    const targetTasksWithoutMoved = targetList.tasks.filter((task) => task.taskId !== taskId);
-    const insertIndex = targetTaskId
-      ? Math.max(
-          targetTasksWithoutMoved.findIndex((task) => task.taskId === targetTaskId),
-          0
-        )
-      : targetTasksWithoutMoved.length;
-    const position = insertIndex + 1;
-
-    try {
-      await moveTaskApi(taskId, {
-        targetListId,
-        position,
-      });
-
-      const boardData = await getBoardData(activeBoardId);
-
-      setActiveBoardId(boardData.boardId);
-      setProjectName(boardData.name);
-      setLists(
-        boardData.lists.map((list) => ({
-          listId: list.listId,
-          name: list.name,
-          tasks: list.tasks
-            .sort((a, b) => a.position - b.position)
-            .map((task) => ({
-              taskId: task.taskId,
-              title: task.title,
-            })),
-        }))
-      );
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Không thể di chuyển nhiệm vụ.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleInviteMember = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const email = inviteEmail.trim().toLowerCase();
-
-    if (!email) {
-      setInviteError('Vui lòng nhập email thành viên.');
-      return;
-    }
-
-    const isEmailFormatValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    if (!isEmailFormatValid) {
-      setInviteError('Email không hợp lệ.');
-      return;
-    }
-
-    const isExisted = boardMembers.some((member) => member.email.toLowerCase() === email);
-    if (isExisted) {
-      setInviteError('Thành viên đã có trong bảng.');
-      return;
-    }
-
-    if (!projectId || Number.isNaN(projectId)) {
-      setInviteError('Không xác định được dự án để mời thành viên.');
-      return;
-    }
-
-    try {
-      await addProjectMember(projectId, {
-        email,
-        role: inviteRole === 'Quản trị viên' ? 'Admin' : 'Member',
-      });
-
-      await refreshWorkspaceMembers();
-
-      setInviteEmail('');
-      setInviteRole('Thành viên');
-      setInviteError('');
-      setMemberActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể mời thành viên.';
-      setInviteError(message);
-    }
-  };
-
-  const handleUpdateMemberRole = async (member: BoardMember, role: Workspace['role']) => {
-    if (!projectId || Number.isNaN(projectId)) {
-      setMemberActionError('Không xác định được dự án để cập nhật quyền thành viên.');
-      return;
-    }
-
-    if (!canManageMemberRole(member)) {
-      setMemberActionError('Bạn không có quyền cập nhật vai trò của thành viên này.');
-      return;
-    }
-
-    if (role === member.workspaceRole || role === 'Owner') {
-      return;
-    }
-
-    try {
-      await updateProjectMemberRole(projectId, member.id, { role });
-      await refreshWorkspaceMembers();
-      setMemberActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể cập nhật quyền thành viên.';
-      setMemberActionError(message);
-    }
-  };
-
-  const handleRemoveMemberFromWorkspace = async (member: BoardMember) => {
-    if (!projectId || Number.isNaN(projectId)) {
-      setMemberActionError('Không xác định được dự án để xóa thành viên.');
-      return;
-    }
-
-    if (!canRemoveMember(member)) {
-      setMemberActionError('Bạn không có quyền xóa thành viên này.');
-      return;
-    }
-
-    const confirmed = window.confirm(`Bạn có chắc muốn xóa ${member.fullName} khỏi project?`);
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await removeProjectMember(projectId, member.id);
-      await refreshWorkspaceMembers();
-      setMemberActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể xóa thành viên.';
-      setMemberActionError(message);
-    }
-  };
-
-  const handleOpenNotificationPanel = () => {
-    setIsNotificationPanelOpen((prev) => !prev);
-    setNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
-  };
-
-  const formatLocalDateTime = (date: Date): string => {
-    const pad = (value: number) => String(value).padStart(2, '0');
-
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-      date.getHours()
-    )}:${pad(date.getMinutes())}`;
-  };
-
-  const toDateInputValue = (rawDate: string): string => {
-    if (!rawDate) {
-      return '';
-    }
-
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(rawDate)) {
-      return rawDate;
-    }
-
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(rawDate)) {
-      return rawDate.slice(0, 16);
-    }
-
-    const parsed = new Date(rawDate);
-    if (Number.isNaN(parsed.getTime())) {
-      return '';
-    }
-
-    return formatLocalDateTime(parsed);
-  };
-
-  const toServerDateTime = (value: string): string | null => {
-    if (!value) {
-      return null;
-    }
-
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) {
-      return `${value}:00`;
-    }
-
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value)) {
-      return value;
-    }
-
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      return null;
-    }
-
-    return `${formatLocalDateTime(parsed)}:00`;
-  };
-
-  const mapTaskDetailFromApi = useCallback((data: TaskDetailResponse): TaskDetailData => {
-    const labelName = data.label?.trim();
-
-    return {
-      taskId: data.taskId,
-      listId: data.listId,
-      title: data.title,
-      description: data.description ?? '',
-      dueDate: data.dueDate ?? '',
-      priority: (data.priority as 'low' | 'medium' | 'high' | null) ?? 'medium',
-      status: (data.status as 'todo' | 'doing' | 'done' | null) ?? 'todo',
-      createdAt: data.createdAt,
-      assignees: data.assignees ?? [],
-      checklist: (data.checklist ?? []).sort((a, b) => a.position - b.position),
-      labels: labelName
-        ? [
-            {
-              id: 1,
-              name: labelName,
-              color: '#2f74ff',
-            },
-          ]
-        : [],
-      attachments: (data.attachments ?? []).map((item) => ({
-        ...item,
-        fileName: item.fileName ?? 'attachment',
-        fileUrl: item.fileUrl ?? '',
-      })),
-      comments: data.comments ?? [],
-      activity: (data.activity ?? []).map((item) => ({
-        ...item,
-        action: item.action ?? '',
-      })),
-    };
-  }, []);
-
-  useEffect(() => {
-    const taskIds = lists.flatMap((list) => list.tasks.map((task) => task.taskId));
-    const missingTaskIds = taskIds.filter(
-      (taskId) => !taskDetailById[taskId] && !loadingTaskDetailIdsRef.current.has(taskId)
-    );
-
-    if (missingTaskIds.length === 0) {
-      return;
-    }
-
-    const currentLoadingIds = loadingTaskDetailIdsRef.current;
-
-    missingTaskIds.forEach((taskId) => {
-      currentLoadingIds.add(taskId);
-    });
-
-    let cancelled = false;
-
-    const loadMissingTaskDetails = async () => {
-      const results = await Promise.allSettled(
-        missingTaskIds.map((taskId) => getTaskDetail(taskId))
-      );
-
-      if (cancelled) {
-        return;
-      }
-
-      setTaskDetailById((prev) => {
-        const next = { ...prev };
-
-        results.forEach((result, index) => {
-          const taskId = missingTaskIds[index];
-          if (result.status === 'fulfilled') {
-            next[taskId] = mapTaskDetailFromApi(result.value);
-          }
-        });
-
-        return next;
-      });
-
-      missingTaskIds.forEach((taskId) => {
-        currentLoadingIds.delete(taskId);
-      });
-    };
-
-    void loadMissingTaskDetails();
-
-    return () => {
-      cancelled = true;
-      missingTaskIds.forEach((taskId) => {
-        currentLoadingIds.delete(taskId);
-      });
-    };
-  }, [lists, taskDetailById, mapTaskDetailFromApi]);
-
-  const updateTaskDetailCache = (next: TaskDetailData) => {
-    setTaskDetail(next);
-    setTaskDetailById((prev) => ({
-      ...prev,
-      [next.taskId]: next,
-    }));
-  };
-
-  const refreshTaskDetail = async (taskId: number): Promise<TaskDetailData> => {
-    const raw = await getTaskDetail(taskId);
-    const mapped = mapTaskDetailFromApi(raw);
-    updateTaskDetailCache(mapped);
-    return mapped;
-  };
-
-  const updateTaskDetailState = (updater: (current: TaskDetailData) => TaskDetailData) => {
-    setTaskDetail((current) => {
-      if (!current) {
-        return current;
-      }
-
-      const next = updater(current);
-
-      setTaskDetailById((prev) => ({
-        ...prev,
-        [next.taskId]: next,
-      }));
-
-      return next;
-    });
-  };
-
-  const handleOpenTaskDetail = async (_listId: number, task: BoardTaskItem) => {
-    const cached = taskDetailById[task.taskId];
-    if (cached) {
-      setTaskDetail(cached);
-      setIsTaskDetailOpen(true);
-    }
-
-    setTaskCommentDraft('');
-    setTaskChecklistDraft('');
-    setTaskAttachmentDraft('');
-    setTaskLabelDraft('');
-    setTaskLabelColorDraft('#2f74ff');
-    setTaskAssigneeDraft('');
-
-    try {
-      await refreshTaskDetail(task.taskId);
-      setIsTaskDetailOpen(true);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Không thể tải chi tiết nhiệm vụ.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleCloseTaskDetail = () => {
-    setIsTaskDetailOpen(false);
-    setTaskDetail(null);
-  };
-
-  const handleDeleteTaskCard = async (taskId: number, listId: number) => {
-    const confirmed = window.confirm('Bạn có chắc muốn xóa thẻ này không?');
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await deleteTask(taskId);
-
-      const boardData = await getBoardData(activeBoardId);
-
-      setActiveBoardId(boardData.boardId);
-      setProjectName(boardData.name);
-      setLists(
-        boardData.lists.map((list) => ({
-          listId: list.listId,
-          name: list.name,
-          tasks: list.tasks
-            .sort((a, b) => a.position - b.position)
-            .map((task) => ({
-              taskId: task.taskId,
-              title: task.title,
-            })),
-        }))
-      );
-
-      setTaskDetailById((prev) => {
-        const next = { ...prev };
-        delete next[taskId];
-        return next;
-      });
-
-      if (taskDetail?.taskId === taskId) {
-        handleCloseTaskDetail();
-      }
-
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const rawMessage = error instanceof Error ? error.message : '';
-      const message = rawMessage.toLowerCase().includes('không có quyền')
-        ? 'Bạn không có quyền xóa nhiệm vụ này'
-        : rawMessage || 'Không thể xóa nhiệm vụ.';
-      window.alert(message);
-      setTaskActionError('');
-    }
-  };
-
-  const handleAddChecklistItem = async () => {
-    const content = taskChecklistDraft.trim();
-    if (!content || !taskDetail) {
-      return;
-    }
-
-    try {
-      await createChecklistItem({
-        taskId: taskDetail.taskId,
-        content,
-      });
-
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskChecklistDraft('');
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể thêm mục kiểm tra.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleToggleChecklistItem = async (itemId: number) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await toggleChecklistItem(itemId);
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể cập nhật mục kiểm tra.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleDeleteChecklistItem = async (itemId: number) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await deleteChecklistItem(itemId);
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể xóa mục kiểm tra.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleMoveChecklistItem = async (itemId: number, targetPosition: number) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await moveChecklistItem(itemId, { position: targetPosition });
-      await refreshTaskDetail(taskDetail.taskId);
-      setDraggingChecklistItemId(null);
-      setDragOverChecklistItemId(null);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể di chuyển mục kiểm tra.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleDropChecklistItem = async (targetItemId: number) => {
-    if (!taskDetail || !draggingChecklistItemId || draggingChecklistItemId === targetItemId) {
-      setDraggingChecklistItemId(null);
-      setDragOverChecklistItemId(null);
-      return;
-    }
-
-    const sourceIndex = taskDetail.checklist.findIndex((item) => item.id === draggingChecklistItemId);
-    const targetIndex = taskDetail.checklist.findIndex((item) => item.id === targetItemId);
-
-    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
-      setDraggingChecklistItemId(null);
-      setDragOverChecklistItemId(null);
-      return;
-    }
-
-    const targetPosition = sourceIndex < targetIndex ? targetIndex : targetIndex + 1;
-    await handleMoveChecklistItem(draggingChecklistItemId, targetPosition);
-  };
-
-  const handleAddTaskComment = async () => {
-    const content = taskCommentDraft.trim();
-    if (!content || !taskDetail) {
-      return;
-    }
-
-    try {
-      await createComment({
-        taskId: taskDetail.taskId,
-        content,
-      });
-
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskCommentDraft('');
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể thêm bình luận.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleDeleteTaskComment = async (commentId: number) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await deleteComment(commentId);
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể xóa bình luận.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleAddAttachment = async () => {
-    const fileUrl = taskAttachmentDraft.trim();
-    if (!fileUrl || !taskDetail) {
-      return;
-    }
-
-    const guessedName = fileUrl.split('/').pop() || `attachment-${Date.now()}`;
-
-    try {
-      await createAttachment({
-        taskId: taskDetail.taskId,
-        fileName: guessedName,
-        fileUrl,
-      });
-
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskAttachmentDraft('');
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể thêm đính kèm.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleDeleteTaskAttachment = async (attachmentId: number) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await deleteAttachment(attachmentId);
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể xóa file đính kèm.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleAddLabel = async () => {
-    const labelName = taskLabelDraft.trim();
-    if (!labelName || !taskDetail) {
-      return;
-    }
-
-    try {
-      await updateTask(taskDetail.taskId, {
-        label: labelName,
-      });
-
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskLabelDraft('');
-      setTaskLabelColorDraft('#2f74ff');
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể thêm nhãn.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleRemoveLabel = async (_labelId: number) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await updateTask(taskDetail.taskId, {
-        label: null,
-      });
-
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể xóa nhãn.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleAddAssignee = async () => {
-    const assigneeId = Number(taskAssigneeDraft);
-    if (!assigneeId || Number.isNaN(assigneeId)) {
-      return;
-    }
-
-    const selectedMember = boardMembers.find((member) => member.id === assigneeId);
-    if (!selectedMember || !taskDetail) {
-      return;
-    }
-
-    try {
-      await addTaskAssignee({
-        taskId: taskDetail.taskId,
-        assigneeUserId: selectedMember.id,
-      });
-
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskAssigneeDraft('');
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể thêm thành viên vào nhiệm vụ.';
-      setTaskActionError(message);
-    }
-  };
-
-  const handleRemoveAssignee = async (userId: number) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await removeTaskAssignee({
-        taskId: taskDetail.taskId,
-        assigneeUserId: userId,
-      });
-
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Không thể xóa thành viên khỏi nhiệm vụ.';
-      setTaskActionError(message);
-    }
-  };
-
-  const persistTaskUpdate = async (
-    payload: {
-      title?: string;
-      description?: string;
-      dueDate?: string | null;
-      label?: string | null;
-      priority?: 'low' | 'medium' | 'high';
-    },
-    fallbackMessage: string
-  ) => {
-    if (!taskDetail) {
-      return;
-    }
-
-    try {
-      await updateTask(taskDetail.taskId, payload);
-      await refreshTaskDetail(taskDetail.taskId);
-      setTaskActionError('');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : fallbackMessage;
-      setTaskActionError(message);
-    }
-  };
-
-  const handlePersistTaskTitle = async () => {
-    if (!taskDetail) {
-      return;
-    }
-
-    const title = taskDetail.title.trim();
-    if (!title) {
-      setTaskActionError('Tiêu đề nhiệm vụ không được để trống.');
-      return;
-    }
-
-    await persistTaskUpdate({ title }, 'Không thể cập nhật tiêu đề nhiệm vụ.');
-  };
-
-  const handlePersistTaskDescription = async () => {
-    if (!taskDetail) {
-      return;
-    }
-
-    await persistTaskUpdate(
-      { description: taskDetail.description.trim() },
-      'Không thể cập nhật mô tả nhiệm vụ.'
-    );
-  };
-
-  const handlePersistTaskDueDate = async () => {
-    if (!taskDetail) {
-      return;
-    }
-
-    await persistTaskUpdate(
-      { dueDate: toServerDateTime(taskDetail.dueDate) },
-      'Không thể cập nhật hạn chót nhiệm vụ.'
-    );
-  };
-
-  const handlePersistTaskPriority = async (priority: 'low' | 'medium' | 'high') => {
-    await persistTaskUpdate(
-      { priority },
-      'Không thể cập nhật mức ưu tiên nhiệm vụ.'
-    );
-  };
-
-  const checklistProgress = useMemo(() => {
-    if (!taskDetail || taskDetail.checklist.length === 0) {
-      return 0;
-    }
-
-    const completed = taskDetail.checklist.filter((item) => item.isCompleted).length;
-    return Math.round((completed / taskDetail.checklist.length) * 100);
-  }, [taskDetail]);
-
-  const isTaskOverdue = useMemo(() => {
-    if (!taskDetail?.dueDate) {
-      return false;
-    }
-
-    return new Date(taskDetail.dueDate).getTime() < Date.now() && taskDetail.status !== 'done';
-  }, [taskDetail]);
-
-  const taskListName = useMemo(() => {
-    if (!taskDetail) {
-      return '';
-    }
-
-    return lists.find((list) => list.listId === taskDetail.listId)?.name ?? 'Không rõ danh sách nhiệm vụ';
-  }, [lists, taskDetail]);
-
-  const getTaskCardLabels = (taskId: number): TaskLabel[] => {
-    const labels = taskDetailById[taskId]?.labels ?? [];
-    return labels.slice(0, 3);
-  };
-
-  const getTaskCardPriority = (taskId: number): 'low' | 'medium' | 'high' => {
-    return taskDetailById[taskId]?.priority ?? 'medium';
-  };
-
-  const getTaskPriorityLabel = (priority: 'low' | 'medium' | 'high'): string => {
-    if (priority === 'high') {
-      return 'Cao';
-    }
-
-    if (priority === 'low') {
-      return 'Thấp';
-    }
-
-    return 'Trung bình';
-  };
-
-  const formatTaskCardDueDate = (rawDate: string): string => {
-    if (!rawDate) {
-      return '';
-    }
-
-    const parsed = new Date(rawDate);
-    if (Number.isNaN(parsed.getTime())) {
-      return '';
-    }
-
-    return `${parsed.getDate()} thg ${parsed.getMonth() + 1}`;
-  };
-
-  const startTaskCardLabelPreview = (taskId: number) => {
-    setPreviewTaskLabelId(taskId);
-  };
-
-  const endTaskCardLabelPreview = () => {
-    setPreviewTaskLabelId(null);
-  };
+  const {
+    projectName,
+    lists,
+    isBoardLoading,
+    currentUser,
+    currentWorkspaceName,
+    currentProjectRole,
+    canManageWorkspace,
+    canInviteAdmin,
+    isShareModalOpen,
+    setIsShareModalOpen,
+    inviteEmail,
+    setInviteEmail,
+    inviteRole,
+    setInviteRole,
+    inviteError,
+    setInviteError,
+    memberActionError,
+    setMemberActionError,
+    boardMembers,
+    notifications,
+    unreadNotifications,
+    isNotificationPanelOpen,
+    handleOpenNotificationPanel,
+    isAccountMenuOpen,
+    setIsAccountMenuOpen,
+    handleOpenAddList,
+    handleDeleteList,
+    handleOpenTaskDetail,
+    draggingTask,
+    setDraggingTask,
+    dragOverListId,
+    setDragOverListId,
+    confirmState,
+    isConfirmSubmitting,
+    handleConfirm,
+    handleCloseConfirm,
+    moveTask,
+    getTaskCardLabels,
+    previewTaskLabelId,
+    startTaskCardLabelPreview,
+    endTaskCardLabelPreview,
+    getTaskCardPriority,
+    getTaskPriorityLabel,
+    taskDetailById,
+    formatTaskCardDueDate,
+    openTaskComposerListId,
+    taskDraftByList,
+    handleTaskDraftChange,
+    handleSubmitAddTask,
+    handleCancelTaskComposer,
+    handleOpenTaskComposer,
+    isAddingList,
+    newListName,
+    editingListId,
+    listNameDraftById,
+    setNewListName,
+    setIsAddingList,
+    handleSubmitAddList,
+    handleStartEditList,
+    handleListNameDraftChange,
+    handleCancelEditList,
+    handleSubmitListName,
+    isBoardHubOpen,
+    setIsBoardHubOpen,
+    boardSearchKeyword,
+    setBoardSearchKeyword,
+    boardFilter,
+    setBoardFilter,
+    recentBoardItems,
+    filteredBoardItems,
+    isTaskDetailOpen,
+    taskDetail,
+    handleCloseTaskDetail,
+    taskListName,
+    updateTaskDetailState,
+    handlePersistTaskTitle,
+    formatLocalDateTime,
+    persistTaskUpdate,
+    toServerDateTime,
+    toDateInputValue,
+    handlePersistTaskDueDate,
+    handlePersistTaskDescription,
+    handlePersistTaskPriority,
+    taskAssigneeDraft,
+    setTaskAssigneeDraft,
+    handleAddAssignee,
+    handleRemoveAssignee,
+    isTaskOverdue,
+    taskLabelColorDraft,
+    setTaskLabelColorDraft,
+    taskLabelDraft,
+    setTaskLabelDraft,
+    handleAddLabel,
+    handleRemoveLabel,
+    taskAttachmentDraft,
+    setTaskAttachmentDraft,
+    handleAddAttachment,
+    handleDeleteTaskAttachment,
+    checklistProgress,
+    taskChecklistDraft,
+    setTaskChecklistDraft,
+    handleAddChecklistItem,
+    handleToggleChecklistItem,
+    handleDeleteChecklistItem,
+    draggingChecklistItemId,
+    setDraggingChecklistItemId,
+    dragOverChecklistItemId,
+    setDragOverChecklistItemId,
+    handleDropChecklistItem,
+    taskCommentDraft,
+    setTaskCommentDraft,
+    handleAddTaskComment,
+    handleDeleteTaskComment,
+    handleDeleteTaskCard,
+    handleInviteMember,
+    canManageMemberRole,
+    handleUpdateMemberRole,
+    canRemoveMember,
+    handleRemoveMemberFromWorkspace,
+    handleSwitchProject,
+    handleOpenAccountSettings,
+    handleLogout,
+  } = useKanbanBoardPage({
+    projectId,
+    initialProjectName,
+    onSwitchProject,
+    onOpenAccountSettings,
+    onLogout,
+  });
 
   return (
     <div className="kanban-root">
@@ -1656,25 +281,82 @@ function KanbanBoardPage({
       <main className="kanban-board-scroll" aria-label="Bảng Kanban">
         {isBoardLoading ? <p className="kanban-empty">Đang tải dữ liệu bảng...</p> : null}
 
-        {lists.map((list) => (
-          <section key={list.listId} className="kanban-list">
-            <div className="kanban-list-head">
-              <h2>{list.name}</h2>
-              <div className="kanban-list-head-actions">
-                <span>{list.tasks.length} thẻ</span>
-                {canManageWorkspace ? (
-                  <button
-                    type="button"
-                    className="kanban-list-remove"
-                    onClick={() => {
-                      void handleDeleteList(list.listId, list.name);
-                    }}
-                  >
-                    Xóa
-                  </button>
-                ) : null}
+        {lists.map((list) => {
+          const isEditingList = editingListId === list.listId;
+          const listDraftValue = listNameDraftById[list.listId] ?? list.name;
+
+          return (
+            <section key={list.listId} className="kanban-list">
+              <div className="kanban-list-head">
+                <h2 className="kanban-list-title">
+                  {isEditingList ? (
+                    <input
+                      className="kanban-list-title-input"
+                      value={listDraftValue}
+                      onChange={(event) => handleListNameDraftChange(list.listId, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void handleSubmitListName(list.listId);
+                        }
+
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          handleCancelEditList(list.listId);
+                        }
+                      }}
+                      maxLength={255}
+                      autoFocus
+                      aria-label="Chỉnh sửa tiêu đề danh sách"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="kanban-list-title-button"
+                      onClick={() => handleStartEditList(list.listId, list.name)}
+                      disabled={!canManageWorkspace}
+                      title={canManageWorkspace ? 'Sửa tên danh sách' : undefined}
+                    >
+                      {list.name}
+                    </button>
+                  )}
+                </h2>
+                <div className="kanban-list-head-actions">
+                  <span>{list.tasks.length} thẻ</span>
+                  {canManageWorkspace ? (
+                    isEditingList ? (
+                      <>
+                        <button
+                          type="button"
+                          className="kanban-list-save"
+                          onClick={() => {
+                            void handleSubmitListName(list.listId);
+                          }}
+                        >
+                          Lưu
+                        </button>
+                        <button
+                          type="button"
+                          className="kanban-list-cancel"
+                          onClick={() => handleCancelEditList(list.listId)}
+                        >
+                          Hủy
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="kanban-list-remove"
+                        onClick={() => {
+                          void handleDeleteList(list.listId, list.name);
+                        }}
+                      >
+                        Xóa
+                      </button>
+                    )
+                  ) : null}
+                </div>
               </div>
-            </div>
 
             <div className="kanban-task-stack">
               {list.tasks.map((task) => {
@@ -1890,7 +572,7 @@ function KanbanBoardPage({
                 );
               })}
 
-              {list.tasks.length === 0 ? <p className="kanban-empty">Chưa có nhiệm vụ trong danh sách này.</p> : null}
+              {list.tasks.length === 0 ? <p className="kanban-empty">Chua có nhiệm vụ trong danh sách này.</p> : null}
             </div>
 
             <div
@@ -1937,8 +619,9 @@ function KanbanBoardPage({
                 + Thêm thẻ
               </button>
             )}
-          </section>
-        ))}
+            </section>
+          );
+        })}
 
         {canManageWorkspace
           ? isAddingList
@@ -2492,7 +1175,7 @@ function KanbanBoardPage({
             <div className="kanban-share-link-box">
               <div className="kanban-share-link-icon">#</div>
               <div className="kanban-share-link-copy">
-                <strong>Chia sẻ bảng này bằng liên kết</strong>
+                <strong>Chia sẻ bảng này bảng liên kết</strong>
                 <button type="button" className="kanban-share-link-action">
                   Tạo liên kết
                 </button>
@@ -2550,9 +1233,28 @@ function KanbanBoardPage({
         </div>
       ) : null}
 
+      <ConfirmModal
+        isOpen={confirmState.isOpen}
+        title={confirmState.title}
+        message={confirmState.message}
+        confirmLabel={confirmState.confirmLabel}
+        cancelLabel={confirmState.cancelLabel}
+        isDanger={confirmState.isDanger}
+        isSubmitting={isConfirmSubmitting}
+        onCancel={handleCloseConfirm}
+        onConfirm={handleConfirm}
+      />
+
     </div>
   );
 }
 
 export default KanbanBoardPage;
+
+
+
+
+
+
+
 

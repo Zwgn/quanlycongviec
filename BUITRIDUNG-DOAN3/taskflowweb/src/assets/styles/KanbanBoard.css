@@ -323,10 +323,38 @@
   gap: 8px;
 }
 
-.kanban-list-head h2 {
+.kanban-list-title {
   margin: 0;
   font-size: 18px;
   color: #182a4f;
+}
+
+.kanban-list-title-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kanban-list-title-button:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.kanban-list-title-input {
+  width: 100%;
+  border: 1px solid var(--kanban-list-border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  background: #ffffff;
 }
 
 .kanban-list-head span {
@@ -357,6 +385,39 @@
 .kanban-list-remove:hover {
   background: #ffe8ee;
   border-color: #ea97ab;
+}
+
+.kanban-list-save,
+.kanban-list-cancel {
+  height: 28px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.kanban-list-save {
+  border: 1px solid #b3cdfb;
+  background: #e8f1ff;
+  color: #1f4fbf;
+}
+
+.kanban-list-save:hover {
+  border-color: #8fb4f4;
+  background: #d9e7ff;
+}
+
+.kanban-list-cancel {
+  border: 1px solid #d8deea;
+  background: #f4f6fb;
+  color: #3e4b66;
+}
+
+.kanban-list-cancel:hover {
+  border-color: #c7cfdf;
+  background: #eceff6;
 }
 
 .kanban-task-stack {

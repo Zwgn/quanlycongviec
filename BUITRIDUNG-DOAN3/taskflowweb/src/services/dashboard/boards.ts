@@ -6,7 +6,7 @@ import {
   parseJsonBody,
   parseRawOrWrappedData,
 } from './api';
-import { ApiResponse, BoardData, CreatedList } from './types';
+import { ApiResponse, BoardData, CreatedList, UpdatedList } from './types';
 
 export const getBoardData = async (boardId: number): Promise<BoardData> => {
   const response = await fetch(`${API_BASE_URL}/boards/${boardId}`, {
@@ -44,4 +44,14 @@ export const deleteList = async (listId: number): Promise<string> => {
   }
 
   return getResponseMessage(body, 'Đã xóa danh sách nhiệm vụ thành công.');
+};
+
+export const updateList = async (listId: number, input: { name: string }): Promise<UpdatedList> => {
+  const response = await fetch(`${API_BASE_URL}/lists/${listId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(input),
+  });
+
+  return parseRawOrWrappedData<UpdatedList>(response);
 };

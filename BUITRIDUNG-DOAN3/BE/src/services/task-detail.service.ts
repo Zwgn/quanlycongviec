@@ -165,11 +165,34 @@ export const taskDetailService = {
 
       const item = result.recordset?.[0] as ChecklistItem | undefined;
 
-      if (!item) {
+      if (item) {
+        return item;
+      }
+
+      const fallbackItemLookup = await pool
+        .request()
+        .input("taskId", sql.Int, input.taskId)
+        .input("content", sql.NVarChar(sql.MAX), content)
+        .query(`
+          SELECT TOP 1
+            id,
+            taskId,
+            content,
+            isCompleted,
+            position
+          FROM ChecklistItem
+          WHERE taskId = @taskId
+            AND LTRIM(RTRIM(content)) = LTRIM(RTRIM(@content))
+          ORDER BY id DESC
+        `);
+
+      const fallbackItem = fallbackItemLookup.recordset?.[0] as ChecklistItem | undefined;
+
+      if (!fallbackItem) {
         throw new AppError("Tạo checklist item thất bại", 500);
       }
 
-      return item;
+      return fallbackItem;
     } catch (error: unknown) {
       mapTaskDetailError(error, "tạo checklist item");
       throw error;
@@ -197,11 +220,31 @@ export const taskDetailService = {
 
       const item = result.recordset?.[0] as ChecklistItem | undefined;
 
-      if (!item) {
+      if (item) {
+        return item;
+      }
+
+      const fallbackItemLookup = await pool
+        .request()
+        .input("id", sql.Int, input.id)
+        .query(`
+          SELECT
+            id,
+            taskId,
+            content,
+            isCompleted,
+            position
+          FROM ChecklistItem
+          WHERE id = @id
+        `);
+
+      const fallbackItem = fallbackItemLookup.recordset?.[0] as ChecklistItem | undefined;
+
+      if (!fallbackItem) {
         throw new AppError("Cập nhật checklist item thất bại", 500);
       }
 
-      return item;
+      return fallbackItem;
     } catch (error: unknown) {
       mapTaskDetailError(error, "cập nhật checklist item");
       throw error;
@@ -222,11 +265,31 @@ export const taskDetailService = {
 
       const item = result.recordset?.[0] as ChecklistItem | undefined;
 
-      if (!item) {
+      if (item) {
+        return item;
+      }
+
+      const fallbackItemLookup = await pool
+        .request()
+        .input("id", sql.Int, id)
+        .query(`
+          SELECT
+            id,
+            taskId,
+            content,
+            isCompleted,
+            position
+          FROM ChecklistItem
+          WHERE id = @id
+        `);
+
+      const fallbackItem = fallbackItemLookup.recordset?.[0] as ChecklistItem | undefined;
+
+      if (!fallbackItem) {
         throw new AppError("Toggle checklist item thất bại", 500);
       }
 
-      return item;
+      return fallbackItem;
     } catch (error: unknown) {
       mapTaskDetailError(error, "toggle checklist item");
       throw error;
@@ -252,11 +315,31 @@ export const taskDetailService = {
 
       const item = result.recordset?.[0] as ChecklistItem | undefined;
 
-      if (!item) {
+      if (item) {
+        return item;
+      }
+
+      const fallbackItemLookup = await pool
+        .request()
+        .input("id", sql.Int, input.id)
+        .query(`
+          SELECT
+            id,
+            taskId,
+            content,
+            isCompleted,
+            position
+          FROM ChecklistItem
+          WHERE id = @id
+        `);
+
+      const fallbackItem = fallbackItemLookup.recordset?.[0] as ChecklistItem | undefined;
+
+      if (!fallbackItem) {
         throw new AppError("Di chuyển checklist item thất bại", 500);
       }
 
-      return item;
+      return fallbackItem;
     } catch (error: unknown) {
       mapTaskDetailError(error, "di chuyển checklist item");
       throw error;
@@ -326,11 +409,38 @@ export const taskDetailService = {
 
       const item = result.recordset?.[0] as CommentItem | undefined;
 
-      if (!item) {
+      if (item) {
+        return item;
+      }
+
+      const fallbackItemLookup = await pool
+        .request()
+        .input("taskId", sql.Int, input.taskId)
+        .input("userId", sql.Int, input.userId)
+        .input("content", sql.NVarChar(sql.MAX), content)
+        .query(`
+          SELECT TOP 1
+            c.commentId,
+            c.taskId,
+            c.userId,
+            u.fullName,
+            c.content,
+            c.createdAt
+          FROM Comment c
+          INNER JOIN [User] u ON u.userId = c.userId
+          WHERE c.taskId = @taskId
+            AND c.userId = @userId
+            AND LTRIM(RTRIM(c.content)) = LTRIM(RTRIM(@content))
+          ORDER BY c.commentId DESC
+        `);
+
+      const fallbackItem = fallbackItemLookup.recordset?.[0] as CommentItem | undefined;
+
+      if (!fallbackItem) {
         throw new AppError("Tạo comment thất bại", 500);
       }
 
-      return item;
+      return fallbackItem;
     } catch (error: unknown) {
       mapTaskDetailError(error, "tạo bình luận");
       throw error;
@@ -402,11 +512,35 @@ export const taskDetailService = {
 
       const item = result.recordset?.[0] as AttachmentItem | undefined;
 
-      if (!item) {
+      if (item) {
+        return item;
+      }
+
+      // Some DB environments return no recordset from the procedure even when insert succeeds.
+      const fallbackLookup = await pool
+        .request()
+        .input("taskId", sql.Int, input.taskId)
+        .input("fileUrl", sql.NVarChar(500), fileUrl)
+        .query(`
+          SELECT TOP 1
+            attachmentId,
+            taskId,
+            fileName,
+            fileUrl,
+            createdAt
+          FROM Attachment
+          WHERE taskId = @taskId
+            AND LTRIM(RTRIM(fileUrl)) = LTRIM(RTRIM(@fileUrl))
+          ORDER BY attachmentId DESC
+        `);
+
+      const fallbackItem = fallbackLookup.recordset?.[0] as AttachmentItem | undefined;
+
+      if (!fallbackItem) {
         throw new AppError("Tạo attachment thất bại", 500);
       }
 
-      return item;
+      return fallbackItem;
     } catch (error: unknown) {
       mapTaskDetailError(error, "tạo file đính kèm");
       throw error;
@@ -490,11 +624,35 @@ export const taskDetailService = {
 
       const item = result.recordset?.[0] as TaskAssigneeItem | undefined;
 
-      if (!item) {
+      if (item) {
+        return item;
+      }
+
+      const fallbackItemLookup = await pool
+        .request()
+        .input("taskId", sql.Int, input.taskId)
+        .input("assigneeUserId", sql.Int, input.assigneeUserId)
+        .query(`
+          SELECT TOP 1
+            ta.id,
+            ta.taskId,
+            ta.userId,
+            u.fullName,
+            ta.assignedAt
+          FROM TaskAssignee ta
+          INNER JOIN [User] u ON u.userId = ta.userId
+          WHERE ta.taskId = @taskId
+            AND ta.userId = @assigneeUserId
+          ORDER BY ta.id DESC
+        `);
+
+      const fallbackItem = fallbackItemLookup.recordset?.[0] as TaskAssigneeItem | undefined;
+
+      if (!fallbackItem) {
         throw new AppError("Thêm assignee thất bại", 500);
       }
 
-      return item;
+      return fallbackItem;
     } catch (error: unknown) {
       mapTaskDetailError(error, "thêm assignee");
       throw error;

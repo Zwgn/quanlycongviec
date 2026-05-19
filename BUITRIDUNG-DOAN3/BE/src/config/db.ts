@@ -3,7 +3,7 @@ import sql from "mssql";
 const getRequiredEnv = (key: string): string => {
   const value = process.env[key];
   if (!value) {
-    throw new Error(`Missing required environment variable: ${key}`);
+    throw new Error(`Thiếu biến môi trường bắt buộc: ${key}`);
   }
   return value;
 };

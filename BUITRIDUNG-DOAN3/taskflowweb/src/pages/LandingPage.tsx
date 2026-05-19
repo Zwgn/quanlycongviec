@@ -1,13 +1,5 @@
-import React, { ChangeEvent, FormEvent, useState } from 'react';
 import '../assets/styles/LandingPage.css';
-
-type ContactFormValues = {
-  fullName: string;
-  email: string;
-  message: string;
-};
-
-type ContactFormErrors = Partial<Record<keyof ContactFormValues, string>>;
+import { useLandingPage } from '../hooks/useLandingPage';
 
 const menuItems = [
   { label: 'Trang chủ', target: '#home' },
@@ -72,83 +64,20 @@ type LandingPageProps = {
   onOpenWorkspace: () => void;
 };
 
+// Trang giới thiệu và form liên hệ cho người dùng mới.
 function LandingPage({
   isAuthenticated,
   onOpenLogin,
   onOpenRegister,
   onOpenWorkspace,
 }: LandingPageProps) {
-  const [formValues, setFormValues] = useState<ContactFormValues>({
-    fullName: '',
-    email: '',
-    message: '',
-  });
-  const [formErrors, setFormErrors] = useState<ContactFormErrors>({});
-  const [isSubmitted, setIsSubmitted] = useState(false);
-
-  const validateContactForm = (values: ContactFormValues): ContactFormErrors => {
-    const errors: ContactFormErrors = {};
-
-    if (!values.fullName.trim()) {
-      errors.fullName = 'Vui lòng nhập họ và tên.';
-    }
-
-    if (!values.email.trim()) {
-      errors.email = 'Vui lòng nhập email.';
-    } else {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(values.email)) {
-        errors.email = 'Email không đúng định dạng.';
-      }
-    }
-
-    if (!values.message.trim()) {
-      errors.message = 'Vui lòng nhập nội dung góp ý.';
-    }
-
-    return errors;
-  };
-
-  const handleInputChange = (
-    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) => {
-    const { name, value } = event.target;
-
-    setFormValues((prevValues) => ({
-      ...prevValues,
-      [name]: value,
-    }));
-
-    if (formErrors[name as keyof ContactFormValues]) {
-      setFormErrors((prevErrors) => ({
-        ...prevErrors,
-        [name]: undefined,
-      }));
-    }
-
-    if (isSubmitted) {
-      setIsSubmitted(false);
-    }
-  };
-
-  const handleContactSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const errors = validateContactForm(formValues);
-    setFormErrors(errors);
-
-    if (Object.keys(errors).length > 0) {
-      setIsSubmitted(false);
-      return;
-    }
-
-    setIsSubmitted(true);
-    setFormValues({
-      fullName: '',
-      email: '',
-      message: '',
-    });
-  };
+  const {
+    formValues,
+    formErrors,
+    isSubmitted,
+    handleInputChange,
+    handleContactSubmit,
+  } = useLandingPage();
 
   return (
     <div className="landing-root">

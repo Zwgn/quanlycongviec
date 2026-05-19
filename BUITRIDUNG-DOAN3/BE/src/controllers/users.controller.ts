@@ -14,7 +14,7 @@ const handleErrorResponse = (res: Response, error: unknown): void => {
 
   res.status(500).json({
     success: false,
-    message: "Internal server error"
+    message: "Lỗi máy chủ nội bộ"
   });
 };
 
@@ -24,7 +24,7 @@ export const getMeController = async (
 ): Promise<void> => {
   try {
     if (!req.user) {
-      throw new AppError("Unauthorized", 401);
+      throw new AppError("Bạn chưa đăng nhập", 401);
     }
 
     const user = await usersService.getMe(req.user.userId);
@@ -32,6 +32,26 @@ export const getMeController = async (
     res.status(200).json({
       success: true,
       data: user
+    });
+  } catch (error: unknown) {
+    handleErrorResponse(res, error);
+  }
+};
+
+export const changePasswordController = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (!req.user) {
+      throw new AppError("Bạn chưa đăng nhập", 401);
+    }
+
+    const result = await usersService.changePassword(req.user.userId, req.body);
+
+    res.status(200).json({
+      success: true,
+      message: result.message
     });
   } catch (error: unknown) {
     handleErrorResponse(res, error);

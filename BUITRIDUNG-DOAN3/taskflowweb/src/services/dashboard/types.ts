@@ -62,6 +62,13 @@ export type CreatedList = {
   position: number;
 };
 
+export type UpdatedList = {
+  listId: number;
+  boardId: number;
+  name: string;
+  position: number;
+};
+
 export type CreatedTask = {
   taskId: number;
   listId: number;

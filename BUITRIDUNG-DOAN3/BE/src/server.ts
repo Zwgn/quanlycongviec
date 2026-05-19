@@ -9,10 +9,10 @@ const startServer = async (): Promise<void> => {
     await connectDB();
 
     app.listen(port, () => {
-      console.log(`Server is running on port ${port}`);
+      console.log(`Máy chủ đang chạy trên cổng ${port}`);
     });
   } catch (error) {
-    console.error("Failed to start server:", error);
+    console.error("Khởi động máy chủ thất bại:", error);
     process.exit(1);
   }
 };

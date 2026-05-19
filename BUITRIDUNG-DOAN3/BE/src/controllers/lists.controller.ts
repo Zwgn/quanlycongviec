@@ -58,3 +58,24 @@ export const deleteListController = async (
     handleErrorResponse(res, error);
   }
 };
+
+export const updateListController = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (!req.user) {
+      throw new AppError("Bạn chưa đăng nhập", 401);
+    }
+
+    const list = await listsService.update({
+      listId: Number(req.params.listId),
+      name: String(req.body?.name ?? ""),
+      userId: req.user.userId
+    });
+
+    res.status(200).json(list);
+  } catch (error: unknown) {
+    handleErrorResponse(res, error);
+  }
+};

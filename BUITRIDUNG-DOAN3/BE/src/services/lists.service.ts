@@ -8,6 +8,12 @@ interface CreateListInput {
   userId: number;
 }
 
+interface UpdateListInput {
+  listId: number;
+  name: string;
+  userId: number;
+}
+
 interface ListItem {
   listId: number;
   boardId: number;
@@ -17,7 +23,7 @@ interface ListItem {
 
 const mapListError = (
   error: unknown,
-  action: "tạo" | "xóa"
+  action: "tạo" | "xóa" | "cập nhật"
 ): never => {
   const dbError = error as { message?: string };
 
@@ -202,6 +208,44 @@ export const listsService = {
       };
     } catch (error: unknown) {
       mapListError(error, "xóa");
+      throw error;
+    }
+  },
+
+  async update(input: UpdateListInput): Promise<ListItem> {
+    const name = input.name?.trim();
+
+    if (!name) {
+      throw new AppError("Tên danh sách nhiệm vụ là bắt buộc", 400);
+    }
+
+    if (name.length < 2) {
+      throw new AppError("Tên danh sách nhiệm vụ cần ít nhất 2 ký tự", 400);
+    }
+
+    if (!input.listId || Number.isNaN(input.listId)) {
+      throw new AppError("ID danh sách nhiệm vụ không hợp lệ", 400);
+    }
+
+    const pool = await getDBPool();
+
+    try {
+      const result = await pool
+        .request()
+        .input("listId", sql.Int, input.listId)
+        .input("name", sql.NVarChar(255), name)
+        .input("userId", sql.Int, input.userId)
+        .execute("sp_List_Update");
+
+      const list = result.recordset?.[0] as ListItem | undefined;
+
+      if (!list) {
+        throw new AppError("Cập nhật danh sách nhiệm vụ thất bại", 500);
+      }
+
+      return list;
+    } catch (error: unknown) {
+      mapListError(error, "cập nhật");
       throw error;
     }
   }
