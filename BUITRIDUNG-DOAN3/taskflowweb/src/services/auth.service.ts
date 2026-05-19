@@ -28,7 +28,7 @@ export type LoginData = {
   };
 };
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL ?? 'http://localhost:3001/api';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL ?? 'https://quanlycongviec-qsyq.onrender.com';
 
 const normalizeFetchError = (error: unknown): Error => {
   if (error instanceof Error) {
