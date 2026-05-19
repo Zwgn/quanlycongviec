@@ -4,9 +4,9 @@
   "description": "Backend for Kanban Task Management",
   "main": "src/server.ts",
   "scripts": {
-    "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
-    "build": "tsc --noEmit",
-    "start": "ts-node src/server.ts"
+    "dev": "nodemon src/server.ts",
+    "build": "tsc ",
+    "start": "ts-node src/server.js"
   },
   "keywords": [
     "kanban",
